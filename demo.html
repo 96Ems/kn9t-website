@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>kn9t — demos: watch it work</title>
-<meta name="description" content="Seven recorded demos of kn9t in action: a turn end to end, creating and hot-loading plugins, a playable plugin UI, a GitHub desk, release notes from real git history, a daily standup, and a bug desk that files real issues.">
-<meta property="og:title" content="kn9t — demos: watch it work">
-<meta property="og:description" content="Seven screen recordings of kn9t doing real work — every demo verified by its own ground truth (files written, keys delivered, history complete).">
+<title>kn9t — seven questions, seven proofs</title>
+<meta name="description" content="What does kn9t change in your day? Seven questions developers actually ask, each answered by an unedited screen recording: code, visibility, control, your own tools, models, scripting, replay.">
+<meta property="og:title" content="kn9t — seven questions, seven proofs">
+<meta property="og:description" content="Can it code? Can I see what it did? Can I control it? Seven questions, seven unedited recordings, every claim checked against its own ground truth.">
 <meta property="og:type" content="website">
 <meta name="theme-color" content="#0E0E14">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230E0E14'/><rect x='2' y='2' width='28' height='28' rx='6' fill='none' stroke='%233F4652'/><text x='6' y='23' font-family='monospace' font-size='17' fill='%23D6DAE0'>k</text><rect x='16' y='11' width='8' height='13' fill='%238B5CF6'/></svg>">
@@ -454,9 +454,20 @@ footer .r{margin-left:auto;display:flex;gap:16px}
   footer{font-size:11.5px;gap:10px}
 }
 @media(max-width:1024px){.fab{display:grid}}
+
+/* ── why kn9t — the plain-language answer, before any jargon ── */
+.why{margin:34px 0 10px;padding:22px 24px;border:1px solid var(--border);
+  border-left:3px solid var(--accent);background:var(--panel);border-radius:0 4px 4px 0}
+.why .eyebrow{margin:0 0 10px}
+.why-turn{margin:0 0 14px;font-size:16.5px;line-height:1.65;color:var(--fg)}
+.why-turn .dim{color:var(--dim)}
+.why-turn b{color:var(--accent)}
+.why-list{list-style:none;margin:0;padding:0}
+.why-list li{position:relative;padding:3px 0 3px 22px;font-size:14px;color:var(--fg)}
+.why-list li::before{content:"▸";position:absolute;left:0;color:var(--accent)}
 </style>
 <style>
-/* ── demo page additions (palette vars only — theme.rs values) ────────────── */
+/* ── proof page additions (palette vars only — theme.rs values) ──────────── */
 .src{display:inline-block;font-family:var(--mono);font-size:10.5px;line-height:1.6;
   color:var(--pale);background:var(--raised);border-left:2px solid var(--accent);
   border-radius:0 3px 3px 0;padding:1px 6px;white-space:nowrap}
@@ -474,17 +485,21 @@ footer .r{margin-left:auto;display:flex;gap:16px}
 .chiplist code{margin:0}
 .hint{color:var(--dim);font-size:11.5px;margin:-12px 0 18px}
 
-/* film card */
-.film{margin:22px 0 30px}
+/* proof card */
+.film{margin:20px 0 30px}
 .film video{width:100%;display:block;border:1px solid var(--border);border-radius:3px;background:#000}
 .film-meta{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 2px 0;
   font-size:11px;color:var(--dim)}
 .film-meta .d{color:var(--alert);font-weight:700}
 .film-meta .g{color:var(--accent)}
 .film-meta a{color:var(--pale)}
-.film .what{margin:12px 0 0;font-size:13.5px;line-height:1.75;color:var(--fg)}
-.film .real{margin:8px 0 0;font-size:12px;line-height:1.7;color:var(--dim)}
+.q{margin:0 0 4px;font-size:clamp(19px,2.6vw,26px);font-weight:800;letter-spacing:-.01em}
+.q .n{color:var(--accent)}
+.ans{margin:2px 0 14px;font-size:14px;color:var(--dim)}
+.ans b{color:var(--add)}
+.film .real{margin:12px 0 0;font-size:12px;line-height:1.7;color:var(--dim)}
 .film .real b{color:var(--add)}
+.shelf{margin-top:8px}
 </style>
 </head>
 <body>
@@ -496,7 +511,7 @@ footer .r{margin-left:auto;display:flex;gap:16px}
     <div class="tabs">
       <a class="tab" href="index.html">kn9t ▸ landing</a>
       <a class="tab" href="architecture.html">architecture</a>
-      <a class="tab active" href="#top">demos</a>
+      <a class="tab active" href="#top">proofs</a>
       <a class="tab" href="https://github.com/96Ems/kn9t">github</a>
     </div>
     <div class="tabbar-right">
@@ -507,7 +522,7 @@ footer .r{margin-left:auto;display:flex;gap:16px}
   <div class="crumb">
     <span>~/dev/kn9t</span><span class="sep">▸</span><span>site</span><span class="sep">▸</span>
     <span class="cur" id="crumb-cur">demo.html</span>
-    <span class="crumb-right"><span>UTF-8</span><span>LF</span><span>7 films</span></span>
+    <span class="crumb-right"><span>UTF-8</span><span>LF</span><span>9 films</span></span>
   </div>
 </header>
 
@@ -515,16 +530,16 @@ footer .r{margin-left:auto;display:flex;gap:16px}
 
   <!-- ═══ explorer (30_sidebar_left.lua) ═════════════════════════════════ -->
   <aside class="col explorer">
-    <div class="side-title">explorer</div>
-    <div class="tree-root">▾ demos/</div>
-    <a class="row" data-sec="basic"><span class="g">▸</span><span class="ext-md">turn.md</span></a>
-    <a class="row" data-sec="plugin"><span class="g">▸</span><span class="ext-md">build-plugin.md</span></a>
-    <a class="row" data-sec="arcade"><span class="g">▸</span><span class="ext-md">arcade.md</span></a>
-    <a class="row" data-sec="desk"><span class="g">▸</span><span class="ext-md">github-desk.md</span></a>
-    <a class="row" data-sec="relnotes"><span class="g">▸</span><span class="ext-md">relnotes.md</span></a>
-    <a class="row" data-sec="standup"><span class="g">▸</span><span class="ext-md">standup.md</span></a>
-    <a class="row" data-sec="triage"><span class="g">▸</span><span class="ext-md">triage.md</span></a>
-    <div class="tree-root">▾ making-of/</div>
+    <div class="side-title">the questions</div>
+    <a class="row" data-sec="q1"><span class="g">▸</span><span class="ext-md">01-code.md</span></a>
+    <a class="row" data-sec="q2"><span class="g">▸</span><span class="ext-md">02-see.md</span></a>
+    <a class="row" data-sec="q3"><span class="g">▸</span><span class="ext-md">03-control.md</span></a>
+    <a class="row" data-sec="q4"><span class="g">▸</span><span class="ext-md">04-tools.md</span></a>
+    <a class="row" data-sec="q5"><span class="g">▸</span><span class="ext-md">05-models.md</span></a>
+    <a class="row" data-sec="q6"><span class="g">▸</span><span class="ext-md">06-script.md</span></a>
+    <a class="row" data-sec="q7"><span class="g">▸</span><span class="ext-md">07-replay.md</span></a>
+    <div class="tree-root">▾ more/</div>
+    <a class="row" data-sec="shelf"><span class="g">▸</span><span class="ext-md">the-daily-shelf.md</span></a>
     <a class="row" data-sec="tool"><span class="g">▸</span><span class="ext-sh">kn9t-demo-rec</span></a>
     <a class="row" data-sec="findings"><span class="g">▸</span><span class="ext-diff">findings.diff</span></a>
     <div class="tree-root">▾ docs/</div>
@@ -538,112 +553,33 @@ footer .r{margin-left:auto;display:flex;gap:16px}
 
     <!-- ── hero ── -->
     <section class="hero" id="top">
-      <p class="eyebrow">7 films · real work · ground truth checked</p>
-      <h1 class="long">watch kn9t work<span class="cur">▌</span></h1>
+      <p class="eyebrow">7 questions · 7 unedited takes · 9 films</p>
+      <h1 class="long">what does it change<br>in my day?<span class="cur">▌</span></h1>
       <p class="lede">
-        Seven screen recordings of kn9t doing <b>actual work</b>: a turn end to
-        end, plugins created and hot-loaded, a playable plugin UI, a GitHub desk
-        on live PRs, release notes read from real git history, a daily standup —
-        and a bug desk that filed <b>three real issues</b> while being filmed.
+        Fair question — before installing anything, you want proof it changes
+        something real. So here are the seven questions developers actually ask,
+        each answered by <b>one unedited screen recording</b> of kn9t doing the
+        work. No mockups, no cherry-picking: every take carries its own ground
+        truth (files written, keys delivered, transcript complete).
       </p>
       <div class="badges">
-        <span class="tag acc">100% real tool calls</span>
+        <span class="tag acc">answers, not features</span>
+        <span class="tag">real repos · real git · real issues</span>
         <span class="tag">scripted model, zero API cost</span>
-        <span class="tag">every film ground-truth checked</span>
         <span class="tag warn">pre-1.0</span>
       </div>
-      <div class="note flat">
-        <h4>how to watch</h4>
-        <p style="margin:0">
-          Each film is a single unedited take. Under it: what the story is, and
-          what is <b>real</b> (files really written, tools really executed, data
-          really fetched). The model lines are scripted — the tool calls, the
-          plugin protocol, the event log and the UI are the real thing. Every
-          film carries its own proof: files present at cut, keys delivered to the
-          TUI, transcript complete.
-        </p>
+      <div class="cta">
+        <a class="btn primary" href="index.html#install">Try kn9t</a>
+        <a class="btn ghost" href="https://github.com/96Ems/kn9t">View on GitHub</a>
+        <a class="btn ghost" href="architecture.html">How it works inside ▸</a>
       </div>
     </section>
 
-    <!-- ── tool ── -->
-    <section id="tool">
-      <p class="eyebrow">00 — making-of</p>
-      <h2>One sequence file = one film</h2>
-      <p>
-        Every demo above was made by <span class="src">scripts/kn9t-demo-rec</span>
-        from a single <code>.seq</code> file — the typed choreography and the
-        model script in one place. The recorder owns everything else: a sandbox
-        home (your real <code>~/.kn9t</code> and keys untouched), a deterministic
-        terminal, capture <b>cropped to the window</b> (the desktop never appears),
-        input injected at the pty (race-free — nothing can leak into your other
-        windows), mp4 + gif + review frames + a timeline log.
-      </p>
-      <div class="chiplist">
-        <code>pause / rate / type / say / send</code>
-        <code>key SPEC</code>
-        <code>click COL ROW</code>
-        <code>sh CMD</code>
-        <code>wait-file / wait-log</code>
-        <code>model-script &lt;&lt;'JSON'</code>
-      </div>
-      <p class="hint">
-        probes before the clap (keystrokes must reach the shell), a static-capture
-        detector (aborts if the screen freezes), and a ground-truth report at cut:
-        real files + keys delivered. Write your own: copy any
-        <span class="src">scripts/demos/*.seq</span>, edit, run.
-      </p>
-    </section>
-
-    <!-- ── 01 basic ── -->
-    <section id="basic">
-      <p class="eyebrow">01 — the turn</p>
-      <h2>One turn, end to end</h2>
-      <div class="film win" data-title="demo/kn9t-demo.mp4">
-        <video controls playsinline preload="metadata" poster="demo/posters/kn9t-demo.jpg">
-          <source src="demo/kn9t-demo.mp4" type="video/mp4">
-        </video>
-        <div class="film-meta">
-          <span class="d">27 s</span><span>·</span><span class="g">kn9t-tools</span>
-          <span>·</span><a href="demo/kn9t-demo.mp4">mp4</a>
-          <span>·</span><a href="demo/kn9t-demo.gif">gif ↗</a>
-        </div>
-        <p class="what">
-          Ask for a file, watch the ReAct loop: thinking, prose, a
-          <code>write</code> tool card — and the <b>human approval gate</b>
-          (<code>before_tool_call</code> answers <code>ask</code>, press
-          <code>y</code>) — then <code>read</code> proves the content back.
-        </p>
-        <p class="real"><b>real:</b> the file is created on disk, the diff card shows its content, the transcript is the durable event log.</p>
-      </div>
-    </section>
-
-    <!-- ── 02 plugin ── -->
-    <section id="plugin">
-      <p class="eyebrow">02 — create &amp; hot-load</p>
-      <h2>Build a plugin, load it, call it</h2>
-      <div class="film win" data-title="demo/kn9t-build-plugin.mp4">
-        <video controls playsinline preload="metadata" poster="demo/posters/kn9t-build-plugin.jpg">
-          <source src="demo/kn9t-build-plugin.mp4" type="video/mp4">
-        </video>
-        <div class="film-meta">
-          <span class="d">60 s</span><span>·</span><span class="g">dice.py</span>
-          <span>·</span><a href="demo/kn9t-build-plugin.mp4">mp4</a>
-          <span>·</span><a href="demo/kn9t-build-plugin.gif">gif ↗</a>
-        </div>
-        <p class="what">
-          The agent writes <code>dice.py</code> — a whole kn9t plugin in 40 lines
-          of plain Python speaking the wire — hot-loads it into the
-          <b>running</b> server, and calls its brand-new <code>roll</code> tool.
-          No restart anywhere.
-        </p>
-        <p class="real"><b>real:</b> the handshake on stdio, the registry rebuilt live, and a genuine <code>rolled a d20 → 12</code> from the process that was just created.</p>
-      </div>
-    </section>
-
-    <!-- ── 03 arcade ── -->
-    <section id="arcade">
-      <p class="eyebrow">03 — plugins all the way down</p>
-      <h2>The arcade: 4 plugins, a live UI rewrite, a game</h2>
+    <!-- ── Q1 ── -->
+    <section id="q1">
+      <p class="eyebrow">proof 01</p>
+      <p class="q"><span class="n">01 —</span> Can it code?</p>
+      <p class="ans">Yes — and it ships running code, not snippets. <b>Four working plugins in one session</b>, one of them a playable game.</p>
       <div class="film win" data-title="demo/kn9t-arcade.mp4">
         <video controls playsinline preload="metadata" poster="demo/posters/kn9t-arcade.jpg">
           <source src="demo/kn9t-arcade.mp4" type="video/mp4">
@@ -654,22 +590,51 @@ footer .r{margin-left:auto;display:flex;gap:16px}
           <span>·</span><a href="demo/kn9t-arcade.mp4">mp4</a>
           <span>·</span><a href="demo/kn9t-arcade.gif">gif ↗</a>
         </div>
-        <p class="what">
-          The cabinet: <code>pm</code> installs other plugins through the
-          <code>plugin_load</code> host-op (one curl only for its own bootstrap),
-          <code>theme</code> <b>recolours the whole TUI on camera</b> by writing
-          its Lua (the file watcher hot-reloads it), and <code>snake</code>
-          registers a <b>playable game</b> as a plugin UI — the film ends on
-          gameplay, driven with the arrow keys.
-        </p>
-        <p class="real"><b>real:</b> three writes in one turn, three live plugin loads, the palette turning cyan mid-frame, and the snake board eating pixels at the bottom.</p>
+        <p class="real"><b>real:</b> a plugin manager, a dice tool, a live theme rewriter and a Snake game in Lua — written, loaded and exercised on screen; the film ends on actual gameplay.</p>
       </div>
     </section>
 
-    <!-- ── 04 desk ── -->
-    <section id="desk">
-      <p class="eyebrow">04 — concrete</p>
-      <h2>The GitHub desk</h2>
+    <!-- ── Q2 ── -->
+    <section id="q2">
+      <p class="eyebrow">proof 02</p>
+      <p class="q"><span class="n">02 —</span> Can I see what it did?</p>
+      <p class="ans">Everything, as it happens. <b>Every action is a card you can open</b>, every card is a row in a log you can replay.</p>
+      <div class="film win" data-title="demo/kn9t-demo.mp4">
+        <video controls playsinline preload="metadata" poster="demo/posters/kn9t-demo.jpg">
+          <source src="demo/kn9t-demo.mp4" type="video/mp4">
+        </video>
+        <div class="film-meta">
+          <span class="d">27 s</span><span>·</span><span class="g">the turn, fully lit</span>
+          <span>·</span><a href="demo/kn9t-demo.mp4">mp4</a>
+          <span>·</span><a href="demo/kn9t-demo.gif">gif ↗</a>
+        </div>
+        <p class="real"><b>real:</b> thinking, prose, tool cards with diffs, live cost to the cent — click any card to open its full output. Behind it: an append-only event log (see <a href="architecture.html">architecture</a>).</p>
+      </div>
+    </section>
+
+    <!-- ── Q3 ── -->
+    <section id="q3">
+      <p class="eyebrow">proof 03</p>
+      <p class="q"><span class="n">03 —</span> Can I control what it is allowed to do?</p>
+      <p class="ans">Per call, per tool, per path. <b>A human gate on anything you want</b> — Allow, Always, or Deny — and policy itself is a replaceable plugin.</p>
+      <div class="film win" data-title="demo/kn9t-build-plugin.mp4">
+        <video controls playsinline preload="metadata" poster="demo/posters/kn9t-build-plugin.jpg">
+          <source src="demo/kn9t-build-plugin.mp4" type="video/mp4">
+        </video>
+        <div class="film-meta">
+          <span class="d">60 s</span><span>·</span><span class="g">dice.py</span>
+          <span>·</span><a href="demo/kn9t-build-plugin.mp4">mp4</a>
+          <span>·</span><a href="demo/kn9t-build-plugin.gif">gif ↗</a>
+        </div>
+        <p class="real"><b>real:</b> the filesystem write stops at a real approval overlay before touching disk; the decision is yours, and the gate is a <code>before_tool_call</code> veto from a policy plugin (kn9t-policy) — swap the policy, keep the engine.</p>
+      </div>
+    </section>
+
+    <!-- ── Q4 ── -->
+    <section id="q4">
+      <p class="eyebrow">proof 04</p>
+      <p class="q"><span class="n">04 —</span> Can I add my own tools?</p>
+      <p class="ans">One file, any language, loaded while kn9t runs. <b>A plugin is a process speaking newline-JSON</b> — tools, providers, policy, UI.</p>
       <div class="film win" data-title="demo/kn9t-github-desk.mp4">
         <video controls playsinline preload="metadata" poster="demo/posters/kn9t-github-desk.jpg">
           <source src="demo/kn9t-github-desk.mp4" type="video/mp4">
@@ -679,22 +644,33 @@ footer .r{margin-left:auto;display:flex;gap:16px}
           <span>·</span><a href="demo/kn9t-github-desk.mp4">mp4</a>
           <span>·</span><a href="demo/kn9t-github-desk.gif">gif ↗</a>
         </div>
-        <p class="what">
-          <code>ghpanel</code> gives kn9t a desk: <code>list_prs</code>,
-          <code>list_issues</code> and <code>pick_issue</code> (over <code>gh</code>,
-          curl fallback) plus a <b>live PR board</b> as a plugin UI —
-          <code>j/k</code> walks it, <code>r</code> refreshes. The demo runs on
-          real repos: <code>ratatui/ratatui</code> (the library drawing this
-          very TUI) and the project's own shop.
-        </p>
-        <p class="real"><b>real:</b> live PRs fetched on camera (<code>#2790 +104/-8 fix(core): Span::width…</code>) and a genuine pick: issue <code>#2767</code> on ratatui, with its URL.</p>
+        <p class="real"><b>real:</b> <code>list_prs</code>, <code>list_issues</code>, <code>pick_issue</code> plus a live PR board — run against real repos (ratatui's open PRs on screen; a real issue picked with its URL).</p>
       </div>
     </section>
 
-    <!-- ── 05 relnotes ── -->
-    <section id="relnotes">
-      <p class="eyebrow">05 — concrete</p>
-      <h2>Release notes from real history</h2>
+    <!-- ── Q5 ── -->
+    <section id="q5">
+      <p class="eyebrow">proof 05</p>
+      <p class="q"><span class="n">05 —</span> Can I change models?</p>
+      <p class="ans">Mid-session, no restarts — and adding one is a config edit. <b>The model is not the architecture</b>: it's a line of config.</p>
+      <div class="film win" data-title="demo/kn9t-models.mp4">
+        <video controls playsinline preload="metadata" poster="demo/posters/kn9t-models.jpg">
+          <source src="demo/kn9t-models.mp4" type="video/mp4">
+        </video>
+        <div class="film-meta">
+          <span class="d">41 s</span><span>·</span><span class="g">the model layer</span>
+          <span>·</span><a href="demo/kn9t-models.mp4">mp4</a>
+          <span>·</span><a href="demo/kn9t-models.gif">gif ↗</a>
+        </div>
+        <p class="real"><b>real:</b> the catalog (plugin-declared), live switching with <code>F2</code>, then a <code>[[model]]</code> block appended to <code>config.toml</code> — the file watcher reloads it and the model is usable seconds later.</p>
+      </div>
+    </section>
+
+    <!-- ── Q6 ── -->
+    <section id="q6">
+      <p class="eyebrow">proof 06</p>
+      <p class="q"><span class="n">06 —</span> Can I script it?</p>
+      <p class="ans">It's built for it — JSONL out, HTTP in, everything a plugin. <b>Facts in, artifact out</b>, like any good Unix citizen.</p>
       <div class="film win" data-title="demo/kn9t-relnotes.mp4">
         <video controls playsinline preload="metadata" poster="demo/posters/kn9t-relnotes.jpg">
           <source src="demo/kn9t-relnotes.mp4" type="video/mp4">
@@ -704,21 +680,34 @@ footer .r{margin-left:auto;display:flex;gap:16px}
           <span>·</span><a href="demo/kn9t-relnotes.mp4">mp4</a>
           <span>·</span><a href="demo/kn9t-relnotes.gif">gif ↗</a>
         </div>
-        <p class="what">
-          Release prep: <code>relnotes</code> feeds the agent the real
-          <code>git log</code> and the churn (<code>changelog</code>,
-          <code>diffstat</code>), and the agent <b>drafts
-          <code>RELEASE_NOTES.md</code></b> from the facts.
-        </p>
-        <p class="real"><b>real:</b> the commits on screen are kn9t's own (<code>15acc49 fix: unblock CI, fix two hot-reload deadlocks…</code>), and the draft lands as a file in the explorer.</p>
+        <p class="real"><b>real:</b> a scripted workflow over the project's own history — <code>git log</code> in, <code>RELEASE_NOTES.md</code> out. (This whole page was produced by <code>kn9t-demo-rec</code>, itself driven by sequence files.)</p>
       </div>
     </section>
 
-    <!-- ── 06 standup ── -->
-    <section id="standup">
-      <p class="eyebrow">06 — concrete</p>
-      <h2>The daily standup, automated</h2>
-      <div class="film win" data-title="demo/kn9t-standup.mp4">
+    <!-- ── Q7 ── -->
+    <section id="q7">
+      <p class="eyebrow">proof 07</p>
+      <p class="q"><span class="n">07 —</span> Can it survive a session? Replayed?</p>
+      <p class="ans">Kill the client, lose nothing. <b>The session is the log, not the window</b> — reopen it and the story plays back exactly.</p>
+      <div class="film win" data-title="demo/kn9t-replay.mp4">
+        <video controls playsinline preload="metadata" poster="demo/posters/kn9t-replay.jpg">
+          <source src="demo/kn9t-replay.mp4" type="video/mp4">
+        </video>
+        <div class="film-meta">
+          <span class="d">43 s</span><span>·</span><span class="g">the log survives</span>
+          <span>·</span><a href="demo/kn9t-replay.mp4">mp4</a>
+          <span>·</span><a href="demo/kn9t-replay.gif">gif ↗</a>
+        </div>
+        <p class="real"><b>real:</b> work finished, the client is killed, relaunched and reopened — same cards, same diffs, same order, straight from the append-only log. The artifact on disk (<code>progress.md</code>) is the receipt.</p>
+      </div>
+    </section>
+
+    <!-- ── shelf ── -->
+    <section id="shelf">
+      <p class="eyebrow">the daily shelf</p>
+      <h2>Two more for the everyday</h2>
+      <p class="hint" style="margin-top:-6px">beyond the seven answers — what a normal morning looks like.</p>
+      <div class="film win shelf" data-title="demo/kn9t-standup.mp4">
         <video controls playsinline preload="metadata" poster="demo/posters/kn9t-standup.jpg">
           <source src="demo/kn9t-standup.mp4" type="video/mp4">
         </video>
@@ -727,21 +716,9 @@ footer .r{margin-left:auto;display:flex;gap:16px}
           <span>·</span><a href="demo/kn9t-standup.mp4">mp4</a>
           <span>·</span><a href="demo/kn9t-standup.gif">gif ↗</a>
         </div>
-        <p class="what">
-          <code>standup</code> reports the state of the repo — branch, commits
-          today and this week, open PRs, and the dirty tree — while
-          <code>find_todos</code> hunts <code>TODO/FIXME/HACK</code> with
-          file:line. A live standup board keeps it on screen.
-        </p>
-        <p class="real"><b>real:</b> the brief is the project's own state, including the untracked <code>site/ scripts/ plugins/</code> — the board says exactly when it's time to push.</p>
+        <p class="real"><b>the daily brief:</b> branch, commits, open PRs, the TODO debt with file:line — and a live board that knows when it's time to push.</p>
       </div>
-    </section>
-
-    <!-- ── 07 triage ── -->
-    <section id="triage">
-      <p class="eyebrow">07 — concrete</p>
-      <h2>The bug desk — 3 real issues, filed on camera</h2>
-      <div class="film win" data-title="demo/kn9t-triage.mp4">
+      <div class="film win shelf" data-title="demo/kn9t-triage.mp4">
         <video controls playsinline preload="metadata" poster="demo/posters/kn9t-triage.jpg">
           <source src="demo/kn9t-triage.mp4" type="video/mp4">
         </video>
@@ -751,36 +728,46 @@ footer .r{margin-left:auto;display:flex;gap:16px}
           <span>·</span><a href="demo/kn9t-triage.gif">gif ↗</a>
           <span>·</span><a href="https://github.com/96Ems/kn9t-plugins/issues">issues ↗</a>
         </div>
-        <p class="what">
-          <code>triage</code> files, labels and tracks real GitHub issues over
-          <code>gh</code>, with a bug board in the TUI. The subject: the three
-          bugs found <i>while building these demos</i> — filed with full repro
-          steps, in one turn, as three parallel tool calls.
-        </p>
-        <p class="real"><b>real:</b> they exist — <a href="https://github.com/96Ems/kn9t-plugins/issues">#1 Always kills a provider-plugin turn</a>, <a href="https://github.com/96Ems/kn9t-plugins/issues">#2 non-interactive Deny hangs the turn</a>, <a href="https://github.com/96Ems/kn9t-plugins/issues">#3 a dead provider plugin hangs until timeout</a>.</p>
+        <p class="real"><b>the bug desk:</b> files real GitHub issues with repro steps — the three bugs this work uncovered, tracked <a href="https://github.com/96Ems/kn9t-plugins/issues">live</a>.</p>
+      </div>
+    </section>
+
+    <!-- ── tool ── -->
+    <section id="tool">
+      <p class="eyebrow">making-of</p>
+      <h2>One sequence file = one film</h2>
+      <p>
+        Every take above came out of <span class="src">scripts/kn9t-demo-rec</span>
+        and one <code>.seq</code> file. The recorder owns the rest: sandboxed home
+        (your real <code>~/.kn9t</code> untouched), capture cropped to the window,
+        input injected at the pty, and a ground-truth report at cut. If a beat
+        failed, the take was thrown away — not patched.
+      </p>
+      <div class="chiplist">
+        <code>pause / rate / type / say</code><code>key SPEC</code>
+        <code>click COL ROW</code><code>sh CMD</code>
+        <code>wait-file / wait-log</code><code>model-script &lt;&lt;'JSON'</code>
       </div>
     </section>
 
     <!-- ── findings ── -->
     <section id="findings">
-      <p class="eyebrow">08 — the receipts</p>
+      <p class="eyebrow">the receipts</p>
       <h2>Found while filming. Filed by the film.</h2>
       <p>
-        Making these demos pushed the tooling into the sharp edges of kn9t — and
-        instead of staying in a notebook, the findings went through the product
-        itself: the <code>triage</code> film files them as
-        <a href="https://github.com/96Ems/kn9t-plugins/issues">three real issues ↗</a>,
-        labelled and tracked on a board.
+        Making these pushed the tooling into kn9t's sharp edges — and the
+        findings went through the product itself: the triage film files them as
+        <a href="https://github.com/96Ems/kn9t-plugins/issues">three real issues ↗</a>.
       </p>
       <div class="note warn">
         <h4>the three findings</h4>
-        <p><b>#1</b> — approving with <b>Always</b> persists to <code>config.toml</code>; the config watcher reloads and reaps provider-plugin subprocesses mid-turn.</p>
-        <p><b>#2</b> — a non-interactive approval <b>Deny</b> never closes the turn (no <code>turn_ended</code>; the CLI waits forever).</p>
-        <p style="margin:0"><b>#3</b> — a provider plugin dying mid-stream hangs the turn until the 600&nbsp;s call timeout instead of failing fast.</p>
+        <p><b>#1</b> — approving with <b>Always</b> persists to <code>config.toml</code>; the reload reaps provider plugins mid-turn.</p>
+        <p><b>#2</b> — a non-interactive approval <b>Deny</b> never closes the turn.</p>
+        <p style="margin:0"><b>#3</b> — a provider plugin dying mid-stream hangs the turn until timeout.</p>
       </div>
       <div class="cta">
-        <a class="btn primary" href="https://github.com/96Ems/kn9t-plugins/issues">Open the tracker ↗</a>
-        <a class="btn ghost" href="architecture.html">How it works inside</a>
+        <a class="btn primary" href="index.html#install">Try kn9t</a>
+        <a class="btn ghost" href="https://github.com/96Ems/kn9t-plugins/issues">Open the tracker ↗</a>
         <a class="btn ghost" href="index.html">← back to landing</a>
       </div>
     </section>
@@ -789,33 +776,32 @@ footer .r{margin-left:auto;display:flex;gap:16px}
 
   <!-- ═══ inspector (40_sidebar_right.lua) ═══════════════════════════════ -->
   <aside class="col inspector">
-    <div class="side-title">the shelf</div>
-    <div class="win" data-title="7 films" style="padding:16px">
+    <div class="side-title">the answers</div>
+    <div class="win" data-title="7 proofs" style="padding:16px">
       <div class="kv">
-        <span class="k">turn</span><span class="v">27 s</span>
-        <span class="k">build-plugin</span><span class="v">60 s</span>
-        <span class="k">arcade</span><span class="v">70 s</span>
-        <span class="k">github-desk</span><span class="v">65 s</span>
-        <span class="k">relnotes</span><span class="v">53 s</span>
-        <span class="k">standup</span><span class="v">44 s</span>
-        <span class="k">triage</span><span class="v">49 s</span>
-        <span class="k">issues filed</span><span class="v ok">3</span>
+        <span class="k">01 code</span><span class="v ok">4 plugins</span>
+        <span class="k">02 see</span><span class="v ok">every card</span>
+        <span class="k">03 control</span><span class="v ok">human gate</span>
+        <span class="k">04 tools</span><span class="v ok">any language</span>
+        <span class="k">05 models</span><span class="v ok">live switch</span>
+        <span class="k">06 script</span><span class="v ok">jsonl + http</span>
+        <span class="k">07 replay</span><span class="v ok">from the log</span>
       </div>
     </div>
     <div class="win" data-title="keys" style="padding:16px">
       <div class="keys">
         <span class="k">C-p</span><span class="v">commands</span>
-        <span class="k">1…0</span><span class="v">jump to film</span>
-        <span class="k">L</span><span class="v">light / dark</span>
+        <span class="k">1…0</span><span class="v">jump to proof</span>
         <span class="k">space</span><span class="v">play / pause</span>
+        <span class="k">L</span><span class="v">light / dark</span>
       </div>
     </div>
     <div class="side-title" style="padding-top:16px">remember</div>
     <div class="win plain" data-title="one take, no cuts" style="padding:16px">
       <p style="margin:0;font-size:11.5px;color:var(--dim)">
-        Every film is a single unedited take, verified at cut: files present,
-        keys delivered, transcript complete. If a beat failed, the take was
-        thrown away — not patched.
+        Nine films, zero edits. Every claim here is a thing that happened on
+        screen — and the three bugs found along the way are public issues, not
+        footnotes.
       </p>
     </div>
   </aside>
@@ -830,8 +816,8 @@ footer .r{margin-left:auto;display:flex;gap:16px}
     <span class="val" id="sb-read">0.0k/0.0k</span>
     <span class="lbl">$</span>
     <span class="money">0.0000</span>
-    <span class="opt"><span class="lbl">films</span><span class="val">7</span></span>
-    <span class="opt"><span class="lbl">plugins</span><span class="val">8</span></span>
+    <span class="opt"><span class="lbl">proofs</span><span class="val">7</span></span>
+    <span class="opt"><span class="lbl">films</span><span class="val">9</span></span>
     <span class="opt"><span class="lbl">issues</span><span class="val">3</span></span>
   </div>
   <div id="sb-right">
@@ -860,7 +846,7 @@ footer .r{margin-left:auto;display:flex;gap:16px}
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
 <script>
-/* ═══ kn9t demos — vanilla JS, no framework. Maps 1:1 to TUI behaviour. */
+/* ═══ kn9t proofs — vanilla JS, no framework. Maps 1:1 to TUI behaviour. */
 (function () {
   "use strict";
   var $ = function (s) { return document.querySelector(s); };
@@ -868,7 +854,6 @@ footer .r{margin-left:auto;display:flex;gap:16px}
 
   if (window.hljs) { window.hljs.highlightAll(); }
 
-  /* ── theme (Theme::dark / Theme::light) ── */
   var root = document.documentElement, themeBtn = $("#theme-btn");
   function setTheme(t) {
     root.setAttribute("data-theme", t);
@@ -882,7 +867,6 @@ footer .r{margin-left:auto;display:flex;gap:16px}
   function toggleTheme() { setTheme(root.getAttribute("data-theme") === "dark" ? "light" : "dark"); }
   themeBtn.addEventListener("click", toggleTheme);
 
-  /* ── sections, explorer rows, breadcrumb ── */
   var sections = $$("main section[id]");
   var rows = {};
   $$(".row[data-sec]").forEach(function (r) { rows[r.getAttribute("data-sec")] = r; });
@@ -902,17 +886,15 @@ footer .r{margin-left:auto;display:flex;gap:16px}
   }, { rootMargin: "-80px 0px -65% 0px", threshold: 0 });
   sections.forEach(function (s) { io.observe(s); });
 
-  /* reveal on scroll */
   var rio = new IntersectionObserver(function (entries) {
     entries.forEach(function (e) {
       if (e.isIntersecting) { e.target.classList.add("in"); rio.unobserve(e.target); }
     });
   }, { threshold: 0.06 });
-  $$(".win, .eyebrow, main h2, .lede, .note, .chiplist").forEach(function (el) {
+  $$(".win, .eyebrow, main h2, .lede, .note, .chiplist, .q, .ans").forEach(function (el) {
     el.classList.add("reveal"); rio.observe(el);
   });
 
-  /* ── status bar: ctx % = scroll depth ── */
   var sbPhase = $("#sb-phase"), sbCtx = $("#sb-ctx"), sbRead = $("#sb-read");
   var readingTimer = null, pending = false;
   function phase(text, colour) {
@@ -943,13 +925,11 @@ footer .r{margin-left:auto;display:flex;gap:16px}
   addEventListener("resize", paint, { passive: true });
   paint();
 
-  /* ── playing a film puts the status bar in "streaming" mode ── */
   $$("video").forEach(function (v) {
     v.addEventListener("play", function () { phase("playing", "var(--add)"); });
     v.addEventListener("pause", function () { if (!paletteOpen) { phase("idle", "var(--dim)"); } });
   });
 
-  /* space plays/pauses the film in view (unless typing in the palette) */
   var films = $$("video");
   function filmInView() {
     var best = null, bestD = Infinity;
@@ -961,7 +941,6 @@ footer .r{margin-left:auto;display:flex;gap:16px}
     return best;
   }
 
-  /* ── command palette ── */
   var palette = $("#palette"), plist = $("#plist"), pq = $("#pq");
   var paletteOpen = false, sel = 0, filtered = [];
   var items = [];
@@ -969,7 +948,7 @@ footer .r{margin-left:auto;display:flex;gap:16px}
     var el = document.getElementById(id);
     if (el) { el.scrollIntoView({ behavior: "smooth", block: "start" }); }
   }
-  items.push({ g: "0", h: "hero", label: "top — watch kn9t work", run: function () { go("top"); } });
+  items.push({ g: "0", h: "hero", label: "top — what does it change in my day?", run: function () { go("top"); } });
   sections.slice(1).forEach(function (s, i) {
     items.push({
       g: i === 9 ? "0" : String(i + 1), h: "section " + (i + 1), label: s.id,

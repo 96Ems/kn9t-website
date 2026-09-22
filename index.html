@@ -454,6 +454,17 @@ footer .r{margin-left:auto;display:flex;gap:16px}
   footer{font-size:11.5px;gap:10px}
 }
 @media(max-width:1024px){.fab{display:grid}}
+
+/* ── why kn9t — the plain-language answer, before any jargon ── */
+.why{margin:34px 0 10px;padding:22px 24px;border:1px solid var(--border);
+  border-left:3px solid var(--accent);background:var(--panel);border-radius:0 4px 4px 0}
+.why .eyebrow{margin:0 0 10px}
+.why-turn{margin:0 0 14px;font-size:16.5px;line-height:1.65;color:var(--fg)}
+.why-turn .dim{color:var(--dim)}
+.why-turn b{color:var(--accent)}
+.why-list{list-style:none;margin:0;padding:0}
+.why-list li{position:relative;padding:3px 0 3px 22px;font-size:14px;color:var(--fg)}
+.why-list li::before{content:"▸";position:absolute;left:0;color:var(--accent)}
 </style>
 </head>
 <body>
@@ -534,8 +545,8 @@ footer .r{margin-left:auto;display:flex;gap:16px}
         <button class="chip" id="copy-install" data-copy="cmd-install">⧉ copy</button>
       </div>
       <div class="cta">
-        <a class="btn primary" href="https://github.com/96Ems/kn9t">GitHub ↗</a>
-        <a class="btn ghost" href="#install">Get started</a>
+        <a class="btn primary" href="#install">Try kn9t</a>
+        <a class="btn ghost" href="https://github.com/96Ems/kn9t">View on GitHub</a>
         <a class="btn ghost" href="architecture.html"><b>How kn9t works</b> ▸</a>
         <a class="btn ghost" href="demo.html"><b>Demos</b> ▸</a>
         <a class="btn ghost" href="#limits">The honest limits</a>
@@ -562,6 +573,19 @@ footer .r{margin-left:auto;display:flex;gap:16px}
     </section>
 
     <!-- ── 01 what ── -->
+    <!-- ── why kn9t ── -->
+    <div class="why" id="why">
+      <p class="eyebrow">why kn9t?</p>
+      <p class="why-turn">Most coding agents optimize for <span class="dim">convenience</span>.<br>
+        kn9t optimizes for <b>knowing what happened</b>.</p>
+      <ul class="why-list">
+        <li>Every durable action is recorded.</li>
+        <li>Every session can be replayed.</li>
+        <li>Tools and policies are replaceable.</li>
+        <li>The model is not the architecture.</li>
+      </ul>
+    </div>
+
     <section id="what">
       <p class="eyebrow">01 — what it is</p>
       <h2>An agent you can read back afterwards.</h2>
@@ -873,7 +897,23 @@ cmd  = [<span class="c-grn">"python"</span>, <span class="c-grn">"-m"</span>, <s
     <!-- ── 06 install ── -->
     <section id="install">
       <p class="eyebrow">06 — getting started</p>
-      <h2>Clone, build, pick a model.</h2>
+      <h2>Get running in 60 seconds.</h2>
+      <p class="muted">The goal is your first <code>kn9t</code> — not a systems
+      lecture. Three commands and you're talking to it:</p>
+      <div class="win plain" data-title="bash · your first kn9t">
+<pre><span class="c-dim"># 1 · get it (rust 1.98+)</span>
+<span class="c-vio">$</span> git clone https://github.com/96Ems/kn9t &amp;&amp; cd kn9t
+<span class="c-vio">$</span> cargo build --release
+
+<span class="c-dim"># 2 · run it — first launch writes ~/.kn9t and starts the server</span>
+<span class="c-vio">$</span> ./target/release/kn9t
+
+<span class="c-dim"># 3 · type a prompt in the box. that was your first kn9t.</span></pre>
+      </div>
+      <p class="muted">The default tools come with it. Models, real prices, more tools
+      and your own plugins are the next block — after your first turn.</p>
+
+      <h3>advanced — providers, models &amp; plugins</h3>
       <div class="wingrid g2">
         <div class="win plain" data-title="bash · build">
 <pre><span class="c-dim"># the agent + the default tools plugin</span>
