@@ -982,7 +982,7 @@ footer .r{margin-left:auto;display:flex;gap:16px}
     if (e.target === palette) { closePalette(); }
   });
   var fab = $("#fab");
-  if (fab) { fab.addEventListener("click", function () { paletteOpen ? closePalette() : openPalette(); }); });
+  if (fab) { fab.addEventListener("click", function () { paletteOpen ? closePalette() : openPalette(); }); }
 
   /* ── hero terminal: replay the JSONL run like real stdout ── */
   var reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
