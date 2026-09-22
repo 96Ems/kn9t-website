@@ -536,13 +536,13 @@ footer .r{margin-left:auto;display:flex;gap:16px}
       <p class="eyebrow">rust · os threads · no async · mit</p>
       <h1 class="long">kn9t<span class="cur">▌</span></h1>
       <p class="lede">
-        The open source coding agent <b>you can audit</b>. One <code>Event</code>
-        is the wire, the log, and the truth.
+        The open source coding agent <b>you can audit</b> — and <b>reshape while it
+        runs</b>. One <code>Event</code> is the wire, the log, and the truth.
       </p>
       <div class="badges">
         <span class="tag acc">MIT · bring your own model</span>
-        <span class="tag">1000+ tests</span>
-        <span class="tag">everything is a plugin</span>
+        <span class="tag">hot reload: ui · tools · policy · models</span>
+        <span class="tag">it builds the tools it needs</span>
         <span class="tag warn">pre-1.0</span>
       </div>
       <div class="cta">
@@ -567,7 +567,9 @@ footer .r{margin-left:auto;display:flex;gap:16px}
     <div class="why" id="why">
       <p class="eyebrow">why kn9t?</p>
       <p class="why-turn">Most coding agents optimize for <span class="dim">convenience</span>.<br>
-        kn9t optimizes for <b>knowing what happened</b>.</p>
+        kn9t optimizes for <b>knowing what happened</b>.<br>
+        <span class="dim">The goal was an agent you reshape in minutes — and making every part
+        replaceable is what made the core auditable.</span></p>
       <div class="flow3" data-diagram>
         <div class="fnode"><span class="t">your prompt</span><span class="s">typed once</span></div>
         <div class="fwire"><i></i><i class="b"></i></div>
@@ -590,6 +592,17 @@ footer .r{margin-left:auto;display:flex;gap:16px}
         <div class="fnode hot" style="flex:0 0 auto"><span class="t">plugins</span><span class="s">replaceable · any language</span></div>
       </div>
       <p class="hint">swap tools, policy, models and the UI while it runs — the model is not the architecture.</p>
+
+      <div class="flow3" data-diagram>
+        <div class="fnode"><span class="t">you describe the task</span><span class="s">in words</span></div>
+        <div class="fwire"><i></i><i class="b"></i></div>
+        <div class="fnode hot"><span class="t">it writes the tool</span><span class="s">any language</span></div>
+        <div class="fwire"><i></i><i class="b"></i></div>
+        <div class="fnode hot"><span class="t">hot-loads it</span><span class="s">no restart</span></div>
+        <div class="fwire"><i></i><i class="b"></i></div>
+        <div class="fnode"><span class="t">calls it</span><span class="s">same turn</span></div>
+      </div>
+      <p class="hint">composable in minutes — UI (lua), tools, policy, providers and models all reload live.</p>
     </div>
 
     <!-- ── the proofs ── -->
@@ -600,7 +613,7 @@ footer .r{margin-left:auto;display:flex;gap:16px}
 
       <div class="film win" id="q1" data-title="demo/kn9t-arcade.mp4">
         <p class="q"><span class="n">01 —</span> Can it code?</p>
-        <p class="ans"><b>Yes</b> — it ships running code: four plugins in one session, one of them a playable game.</p>
+        <p class="ans"><b>Yes</b> — it ships running code and hot-loads it: four plugins in one session, one a playable game.</p>
         <video controls playsinline preload="metadata" poster="demo/posters/kn9t-arcade.jpg">
           <source src="demo/kn9t-arcade.mp4" type="video/mp4">
         </video>
@@ -633,7 +646,7 @@ footer .r{margin-left:auto;display:flex;gap:16px}
 
       <div class="film win" id="q4" data-title="demo/kn9t-github-desk.mp4">
         <p class="q"><span class="n">04 —</span> Can I add my own tools?</p>
-        <p class="ans"><b>One file, any language</b> — a plugin is a process speaking newline-JSON.</p>
+        <p class="ans"><b>One file, any language</b> — written mid-task, loaded while kn9t runs.</p>
         <video controls playsinline preload="metadata" poster="demo/posters/kn9t-github-desk.jpg">
           <source src="demo/kn9t-github-desk.mp4" type="video/mp4">
         </video>
@@ -747,7 +760,8 @@ footer .r{margin-left:auto;display:flex;gap:16px}
     <div class="win plain" data-title="the log is the truth" style="padding:16px">
       <p style="margin:0;font-size:11.5px;color:var(--dim)">
         State lives in an append-only event log — which is why the UI, the tools,
-        the policy and the models can all change while it runs.
+        the policy and the models can all change while it runs. Give it a task and
+        it writes the tools it lacks.
       </p>
     </div>
   </aside>
