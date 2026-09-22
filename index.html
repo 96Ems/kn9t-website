@@ -1,0 +1,1529 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kn9t — the open source coding agent you can audit</title>
+<meta name="description" content="kn9t is a minimal, modular coding agent in Rust. One Event enum is the wire, the log, and the truth. Tools, providers, policy and compaction are all plugins.">
+<meta property="og:title" content="kn9t — the open source coding agent you can audit">
+<meta property="og:description" content="Events are the wire, the log, and the truth. No async runtime. Everything is a plugin.">
+<meta property="og:type" content="website">
+<meta name="theme-color" content="#0E0E14">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230E0E14'/><rect x='2' y='2' width='28' height='28' rx='6' fill='none' stroke='%233F4652'/><text x='6' y='23' font-family='monospace' font-size='17' fill='%23D6DAE0'>k</text><rect x='16' y='11' width='8' height='13' fill='%238B5CF6'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;0,800;1,400&display=swap" rel="stylesheet">
+<style>
+/* ═════════════════════════════════════════════════════════════════════════
+   kn9t landing — styled after crates/kn9t-tui (theme.rs mascot palette).
+   Three colours carry meaning (PLAN §P7 D16):
+     accent  violet  — selection, focus, active tab, headings, mentions
+     alert   amber   — attention: a running tool, cost, an approval
+     chrome  silver  — everything else
+   green / red are reserved for diffs. Everything below obeys that.
+   ═════════════════════════════════════════════════════════════════════════ */
+:root{
+  /* Theme::dark() — palette:: */
+  --bg:#0E0E14;          /* INK          */
+  --panel:#16171D;       /* INK_PANEL    */
+  --raised:#1B172B;      /* INK_RAISED   */
+  --sel:#1E1A2E;         /* VIOLET_TINT  */
+  --accent:#8B5CF6;      /* VIOLET       */
+  --alert:#FBBF24;       /* AMBER        */
+  --add:#4ADE80;         /* GREEN (diff) */
+  --del:#F87171;         /* RED   (diff) */
+  --fg:#E4E8EE;          /* SILVER — brightened for screen contrast */
+  --dim:#A2AAB8;         /* SILVER_DIM                            */
+  --pale:#79808D;        /* SILVER_PALE                           */
+  --border:#4E5665;      /* SILVER_DEEP                           */
+  --ink:#0E0E14;         /* text ON a solid block */
+  --grid:rgba(214,218,224,.05);
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+}
+html[data-theme="light"]{
+  /* Theme::light() */
+  --bg:#F3F4F7;          /* PAPER        */
+  --panel:#E8EAEF;       /* PAPER_PANEL  */
+  --raised:#EDE9FE;      /* PAPER_RAISED */
+  --sel:#EDE9FE;
+  --accent:#6D28D9;      /* VIOLET_DEEP  */
+  --alert:#B45309;       /* AMBER_DEEP   */
+  --add:#147A3C;         /* GREEN_DEEP   */
+  --del:#B91C1C;         /* RED_DEEP     */
+  --fg:#2C323E;          /* SILVER_DEEP — darkened for contrast */
+  --dim:#565E6C;         /* SILVER_PALE                        */
+  --pale:#767E8B;
+  --border:#B9C0CB;
+  --ink:#F3F4F7;         /* PAPER — text on violet-deep blocks */
+  --grid:rgba(14,14,20,.05);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;background:var(--bg);color:var(--fg);
+  font-family:var(--mono);font-size:15px;line-height:1.78;
+  font-variant-ligatures:none;-webkit-font-smoothing:antialiased;
+  padding-top:66px;padding-bottom:36px;
+  overflow-x:clip;   /* no horizontal scroll → phones don't auto-zoom out */
+}
+body,.chrome,.win,.tab,.ask,.tw,.diffcol,.chip,.row{transition:background-color .25s,border-color .25s,color .25s}
+code{overflow-wrap:anywhere}
+/* dot grid + scanlines + violet glow: terminal texture, all CSS */
+body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+  background-image:radial-gradient(var(--grid) 1px,transparent 1px);background-size:22px 22px}
+body::after{content:"";position:fixed;inset:0;z-index:60;pointer-events:none;opacity:.5;
+  background:repeating-linear-gradient(to bottom,rgba(0,0,0,.035) 0 1px,transparent 1px 3px)}
+html[data-theme="light"] body::after{display:none}
+::selection{background:var(--sel);color:var(--fg)}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+:focus-visible{outline:1px solid var(--accent);outline-offset:2px}
+.skip{position:absolute;left:-9999px}
+.skip:focus{left:8px;top:8px;z-index:99;background:var(--accent);color:var(--ink);padding:6px 12px}
+
+/* ── top chrome: tab bar + breadcrumb (20_header.lua, VS Code grammar) ── */
+.chrome{position:fixed;left:0;right:0;z-index:50;background:var(--panel)}
+#chrome-top{top:0;border-bottom:1px solid var(--border)}
+.tabbar{display:flex;align-items:stretch;height:38px;overflow-x:auto;scrollbar-width:none}
+.tabbar::-webkit-scrollbar{display:none}
+.tabs{display:flex;align-items:stretch}
+.tab{display:flex;align-items:center;gap:8px;padding:0 15px;font-size:12.5px;
+  color:var(--dim);border-right:1px solid var(--border);white-space:nowrap;
+  background:none;border-top:0;border-bottom:0;border-left:0;font-family:inherit;cursor:pointer}
+.tab:hover{color:var(--fg);background:var(--raised);text-decoration:none}
+.tab.active{background:var(--accent);color:var(--ink);font-weight:700}   /* tab_active_bg / fg */
+.tabbar-right{margin-left:auto;display:flex;align-items:center;gap:8px;padding:0 12px}
+.chip{font-family:inherit;font-size:11.5px;color:var(--dim);background:var(--bg);
+  border:1px solid var(--border);border-radius:3px;padding:3px 9px;cursor:pointer}
+.chip:hover{color:var(--fg);border-color:var(--accent)}
+.chip b{color:var(--alert);font-weight:500}
+.crumb{display:flex;align-items:center;height:27px;padding:0 15px;font-size:11.5px;
+  color:var(--dim);background:var(--bg);border-top:1px solid var(--border)}
+.crumb .sep{color:var(--pale);padding:0 7px}
+.crumb .cur{color:var(--fg)}
+.crumb-right{margin-left:auto;color:var(--pale);display:flex;gap:14px}
+@media(max-width:760px){.crumb-right{display:none}}
+
+/* ── frame: explorer │ content │ inspector (sidebars auto-hide at 110ch) ── */
+.frame{position:relative;z-index:1;display:grid;grid-template-columns:240px minmax(0,1fr) 300px;
+  max-width:1600px;margin:0 auto;padding:0 10px}
+.col{position:sticky;top:74px;align-self:start;height:calc(100vh - 116px);overflow-y:auto;
+  padding:16px 10px;font-size:12px;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.col::-webkit-scrollbar{width:8px}
+.col::-webkit-scrollbar-thumb{background:var(--border)}
+.side-title{color:var(--dim);font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+  padding:4px 8px 8px}
+@media(max-width:1280px){.inspector{display:none}.frame{grid-template-columns:240px minmax(0,1fr)}}
+@media(max-width:1024px){.explorer{display:none}.frame{grid-template-columns:minmax(0,1fr)}}
+
+/* explorer tree (▸ / ▾ glyphs, selection = violet tint + accent rail) */
+.tree-root{color:var(--dim);padding:8px 8px 4px}
+.row{display:flex;gap:8px;padding:3px 8px;color:var(--dim);border-radius:2px;cursor:pointer}
+.row:hover{color:var(--fg);background:var(--raised);text-decoration:none}
+.row .g{color:var(--pale);width:10px}
+.row.active{background:var(--sel);color:var(--fg);box-shadow:inset 2px 0 0 var(--accent)}
+.row.active .g{color:var(--accent)}
+.ext-md{color:var(--accent)}.ext-sh{color:var(--alert)}.ext-diff{color:var(--add)}
+.ext-json{color:var(--dim)}.ext-db{color:var(--pale)}
+.row .sub{color:var(--pale);margin-left:auto;padding-left:14px}
+
+/* ── content column ── */
+/* NB: `margin:0 auto` on a grid item kills `stretch` (auto margins win) — the box
+   then shrink-wraps to its min-content (~660px, driven by <pre> lines) and the whole
+   page renders wider than a phone screen. `width:100%` pins it to the grid track. */
+main{min-width:0;width:100%;max-width:900px;margin:0 auto;padding:38px 32px 40px}
+section{scroll-margin-top:82px;padding:52px 0}
+.eyebrow{font-size:11.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--accent);
+  margin:0 0 14px}
+h1{font-size:clamp(34px,5.8vw,58px);line-height:1.05;font-weight:800;margin:0 0 14px;
+  letter-spacing:-.03em}
+h1 .cur{color:var(--accent);animation:blink 1.1s steps(1) infinite}
+h2{font-size:clamp(23px,3vw,32px);margin:0 0 18px;color:var(--accent);
+  font-weight:700;letter-spacing:-.01em;line-height:1.18}   /* headings = accent */
+h3{display:flex;align-items:center;gap:12px;font-size:12.5px;margin:52px 0 18px;
+  color:var(--accent);letter-spacing:.1em;text-transform:uppercase;font-weight:700}
+h3::before{content:"▸";color:var(--pale)}
+h3::after{content:"";flex:1;height:1px;background:var(--border)}
+h4{margin:0 0 8px;font-size:14px;color:var(--fg)}
+p{margin:0 0 18px;max-width:72ch}
+.lede{font-size:16.5px;color:var(--fg);max-width:66ch;line-height:1.7}
+.muted{color:var(--dim)}
+code{font-family:inherit;font-size:.92em;background:var(--panel);border:1px solid var(--border);
+  padding:.05em .35em;border-radius:3px;color:var(--fg)}
+b,strong{color:var(--fg);font-weight:700}
+ul{padding-left:0;list-style:none;margin:0 0 18px}
+li{margin:0 0 13px;padding-left:24px;position:relative;max-width:72ch}
+li::before{content:"▸";position:absolute;left:2px;color:var(--pale)}
+
+/* one-line feature list (opencode-style [*] bullets) */
+.feat{margin:10px 0 0}
+.feat li{margin-bottom:15px;padding-left:28px;font-size:14.5px;color:var(--dim)}
+.feat li::before{content:"[*]";color:var(--accent);font-size:12px;top:1px}
+.feat li b{color:var(--fg)}
+
+/* "primitives, not features" — pi-style honest exclusions */
+.prim{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px 34px;margin-top:12px}
+@media(max-width:820px){.prim{grid-template-columns:minmax(0,1fr)}}
+.prim .it{padding-left:26px;position:relative}
+.prim .it::before{content:"×";position:absolute;left:4px;color:var(--pale);font-weight:700}
+.prim .it b{display:block;color:var(--fg);font-size:14px;margin-bottom:2px}
+.prim .it span{color:var(--dim);font-size:13.5px;line-height:1.6}
+
+/* windows: ╭─ title ─╮ panels (tool cards = INK_PANEL, focus = INK_RAISED + violet) */
+.win{position:relative;border:1px solid var(--border);border-radius:4px;background:var(--panel);
+  padding:26px 24px 20px;margin:0 0 22px;transition:border-color .15s,background .15s}
+.win:hover{border-color:var(--accent);background:var(--raised)}   /* tool_focus_* */
+.win::before{content:attr(data-title);position:absolute;top:-8px;left:14px;padding:0 8px;
+  background:var(--bg);color:var(--accent);font-size:11px;letter-spacing:.08em}
+.win.plain::before{color:var(--dim)}
+.win p:last-child{margin-bottom:0}
+.wingrid{display:grid;gap:16px;margin-bottom:16px}
+.wingrid>*{min-width:0}
+.wingrid .win{margin:0}
+.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+@media(max-width:980px){.g3{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:720px){.g2,.g3{grid-template-columns:minmax(0,1fr)}}
+
+/* kv rows — theme.input_key amber / input_value silver */
+.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 16px;font-size:12.5px}
+.kv .k{color:var(--alert)}
+.kv .v{color:var(--fg);text-align:right}
+.kv .v.ok{color:var(--add)}
+.kv .ct{font-variant-numeric:tabular-nums}
+
+/* which-key hints (50_status.lua right side: key in accent, label in value) */
+.keys{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 14px;font-size:12.5px}
+.keys .k{color:var(--accent);white-space:nowrap}
+.keys .v{color:var(--fg)}
+
+/* code panes + hljs theme mapped to the same palette */
+pre{margin:0;overflow-x:auto;max-width:100%;font-family:inherit;font-size:12.7px;line-height:1.7}
+.win pre{padding-bottom:4px}
+code.hljs{padding:0;background:none;color:var(--fg)}
+.hljs-comment,.hljs-meta{color:var(--dim);font-style:italic}
+.hljs-keyword,.hljs-built_in,.hljs-selector-tag{color:var(--accent)}
+.hljs-string,.hljs-attr,.hljs-template-tag{color:var(--alert)}
+.hljs-number,.hljs-literal,.hljs-bool{color:var(--add)}
+.hljs-title,.hljs-function,.hljs-type,.hljs-class{color:var(--fg)}
+.hljs-variable,.hljs-params{color:var(--fg)}
+.hljs-punctuation,.hljs-operator{color:var(--dim)}
+.c-dim{color:var(--dim)}.c-grn{color:var(--add)}.c-amb{color:var(--alert)}
+.c-vio{color:var(--accent)}.c-red{color:var(--del)}.c-sil{color:var(--fg)}
+
+/* chips / tags */
+.tag{display:inline-block;font-size:10.5px;letter-spacing:.06em;padding:2px 8px;border-radius:2px;
+  background:var(--panel);border:1px solid var(--border);color:var(--dim);margin:0 5px 5px 0}
+.tag.ok{color:var(--add);border-color:color-mix(in srgb,var(--add) 35%,transparent)}
+.tag.warn{color:var(--alert);border-color:color-mix(in srgb,var(--alert) 35%,transparent)}
+.tag.acc{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,transparent)}
+
+/* buttons: solid block = primary (ink on accent), bordered = ghost */
+.btn{display:inline-flex;align-items:center;gap:8px;font-family:inherit;font-size:13px;
+  padding:9px 18px;border-radius:3px;cursor:pointer;transition:.15s;font-weight:700}
+.btn.primary{background:var(--accent);color:var(--ink);border:1px solid var(--accent)}
+.btn.primary:hover{filter:brightness(1.12);text-decoration:none}
+.btn.ghost{background:var(--panel);color:var(--fg);border:1px solid var(--border)}
+.btn.ghost:hover{border-color:var(--accent);text-decoration:none}
+
+/* install bar — the opencode/omp hero pattern, with copy */
+.irow{display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:4px;
+  background:var(--panel);padding:10px 12px;margin:0 0 10px;max-width:100%;overflow:hidden}
+.irow .pr{color:var(--accent)}
+.irow code{background:none;border:none;padding:0;color:var(--fg);font-size:12.8px;
+  white-space:nowrap;overflow-x:auto;flex:1 1 0;min-width:0}
+.irow .chip{flex-shrink:0}
+
+/* hero */
+.hero{padding-top:14px;position:relative}
+/* glow lives INSIDE the hero — an overflowing pseudo-element made phones zoom out */
+.hero::before{content:"";position:absolute;inset:0 0 auto 0;height:420px;z-index:-1;
+  background:radial-gradient(520px 240px at calc(24% + var(--mx,0%)) calc(30% + var(--my,0%)),
+             color-mix(in srgb,var(--accent) 15%,transparent),transparent 70%),
+             radial-gradient(460px 220px at calc(80% - var(--mx,0%)) 0%,
+             color-mix(in srgb,var(--alert) 8%,transparent),transparent 70%)}
+.badges{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0 22px}
+.cta{display:flex;gap:12px;flex-wrap:wrap;margin:0 0 28px}
+.tln{opacity:0;animation:rise .28s ease-out forwards}
+
+/* turn flow */
+.flow{margin:4px 0 16px;padding-left:6px;border-left:1px solid var(--border)}
+.step{position:relative;padding:0 0 18px 26px}
+.step:last-child{padding-bottom:4px}
+.step::before{content:"";position:absolute;left:-4px;top:7px;width:7px;height:7px;
+  background:var(--bg);border:1px solid var(--accent);border-radius:50%}
+.step h4{margin:0 0 4px;font-size:13.5px;color:var(--fg)}
+.step h4 .n{color:var(--accent);font-weight:800;padding-right:8px}
+.step p{margin:0;font-size:13px;color:var(--dim);max-width:70ch}
+
+/* honest limits — diff red, because it removes things */
+.diffgrid{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
+.diffgrid>*{min-width:0}
+.diffcol{border:1px solid var(--border);border-radius:4px;background:var(--panel);overflow:hidden}
+.diffhead{padding:11px 16px;font-size:11.5px;letter-spacing:.12em;text-transform:uppercase;
+  border-bottom:1px solid var(--border);color:var(--ink);font-weight:700}
+.diffhead.del{background:var(--del)}
+.dline{padding:10px 14px 10px 34px;position:relative;font-size:13px;color:var(--dim);
+  border-bottom:1px solid var(--border)}
+.dline:last-child{border-bottom:none}
+.dline .sign{position:absolute;left:13px;font-weight:800}
+.dline.del{background:color-mix(in srgb,var(--del) 5%,transparent)}
+.dline.del .sign{color:var(--del)}
+.dline b{color:var(--fg)}
+
+/* FAQ — native accordion */
+details{border:1px solid var(--border);border-radius:4px;background:var(--panel);margin:0 0 10px}
+details[open]{background:var(--raised)}
+summary{cursor:pointer;padding:12px 16px;font-size:13.5px;color:var(--fg);font-weight:700;
+  list-style:none;position:relative;padding-left:34px}
+summary::-webkit-details-marker{display:none}
+summary::before{content:"▸";position:absolute;left:16px;color:var(--accent);transition:transform .15s}
+details[open] summary::before{transform:rotate(90deg)}
+details p{padding:0 16px 14px 34px;margin:0;font-size:13px;color:var(--dim)}
+
+/* hero run bar: the terminal's own status strip (50_status.lua grammar) */
+.runbar{display:flex;align-items:center;flex-wrap:wrap;gap:2px 4px;margin-top:14px;
+  padding-top:12px;border-top:1px solid var(--border);font-size:12px}
+.runbar .lbl{padding-left:10px}
+.spin{color:var(--accent);font-size:13px;line-height:1}
+#run-ok{color:var(--add);transition:opacity .3s;padding-left:12px}
+.term-run{position:absolute;top:-11px;right:12px}
+.term-run .chip{background:var(--bg)}
+.term-run .chip:hover{color:var(--accent)}
+
+/* mobile FAB — the palette without a keyboard */
+.fab{position:fixed;right:14px;bottom:48px;z-index:70;width:48px;height:48px;border-radius:4px;
+  background:var(--accent);color:var(--ink);border:1px solid var(--accent);font-family:inherit;
+  font-size:19px;font-weight:800;display:none;place-items:center;cursor:pointer;
+  box-shadow:0 10px 24px rgba(0,0,0,.4)}
+.fab:active{transform:scale(.94)}
+
+/* palette input — a real input so phones get their virtual keyboard */
+#pq{flex:1;min-width:0;background:none;border:0;outline:none;color:var(--fg);
+  font:inherit;font-size:13px;caret-color:var(--accent)}
+#pq::placeholder{color:var(--pale)}
+
+footer{padding:10px 0 24px;display:flex;gap:18px;flex-wrap:wrap;align-items:center;
+  color:var(--pale);font-size:12px;border-top:1px solid var(--border);margin-top:12px}
+footer .brand{color:var(--fg);font-weight:800}
+footer .brand i{color:var(--accent);font-style:normal}
+footer .r{margin-left:auto;display:flex;gap:16px}
+
+/* ── bottom chrome: segmented status bar (50_status.lua) ── */
+#chrome-bottom{bottom:0;height:34px;border-top:1px solid var(--border);background:var(--panel);
+  display:flex;align-items:center;font-size:12px;overflow-x:auto;scrollbar-width:none}
+#chrome-bottom::-webkit-scrollbar{display:none}
+.seg{display:flex;align-items:center;white-space:nowrap}
+.blk{padding:2px 8px;font-weight:700;color:var(--ink);background:var(--dim);border-radius:2px;
+  margin:0 6px 0 8px;transition:background .2s}
+.lbl{color:var(--dim);padding-left:12px}
+.val{color:var(--fg);padding-left:6px}
+.money{color:var(--alert)}
+#sb-right{margin-left:auto;display:flex;align-items:center;padding:0 14px}
+#sb-right .k{color:var(--accent)}
+#sb-right .v{color:var(--fg);padding-right:16px}
+
+/* ── command palette: SOLID panel, clearly separated from a scrimmed page ── */
+.palette{position:fixed;inset:0;z-index:80;padding:14vh 12px 0;
+  background:color-mix(in srgb,var(--bg) 82%,transparent);
+  backdrop-filter:blur(14px) saturate(1.15);
+  -webkit-backdrop-filter:blur(14px) saturate(1.15);
+  display:flex;justify-content:center;align-items:flex-start}
+.palette[hidden]{display:none}
+.pbox{width:min(640px,100%);background:var(--panel);border:1px solid var(--accent);
+  border-radius:5px;overflow:hidden;   /* fully opaque — the page must not bleed through */
+  box-shadow:0 30px 80px rgba(0,0,0,.7),
+             0 0 0 4px color-mix(in srgb,var(--accent) 12%,transparent),
+             0 0 44px color-mix(in srgb,var(--accent) 16%,transparent);
+  animation:popin .18s ease-out}
+@keyframes popin{from{opacity:0;transform:translateY(-10px) scale(.985)}to{opacity:1;transform:none}}
+.ptitle{padding:9px 16px;border-bottom:1px solid var(--border);color:var(--accent);
+  background:color-mix(in srgb,var(--raised) 85%,var(--bg));
+  font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+  display:flex;align-items:center;gap:8px}
+.ptitle .r{margin-left:auto;color:var(--pale);letter-spacing:.05em;text-transform:none}
+.pinput{display:flex;align-items:center;gap:9px;padding:13px 16px;
+  border-bottom:1px solid var(--border);background:var(--bg)}
+.pinput .pr{color:var(--accent)}
+.pinput .cur{color:var(--accent);animation:blink 1.1s steps(1) infinite}
+.plist{list-style:none;margin:0;padding:6px 0;max-height:46vh;overflow-y:auto;background:var(--panel)}
+.plist li{margin:0;padding:0}
+.plist button{display:flex;width:100%;gap:12px;align-items:baseline;text-align:left;
+  background:none;border:0;font-family:inherit;font-size:13.5px;color:var(--fg);
+  padding:9px 16px;cursor:pointer}
+.plist button:hover{background:color-mix(in srgb,var(--sel) 70%,transparent)}
+.plist li.sel button{background:var(--sel);box-shadow:inset 3px 0 0 var(--accent)}
+.plist li.sel button::before{content:"▸";margin-left:-10px;color:var(--accent)}
+.plist .g{color:var(--accent);font-weight:700;min-width:16px}
+.plist .h{color:var(--dim);margin-left:auto;font-size:11.5px}
+.phint{padding:9px 16px;border-top:1px solid var(--border);color:var(--dim);font-size:11px;
+  background:color-mix(in srgb,var(--raised) 85%,var(--bg))}
+.phint .k{color:var(--accent)}
+
+/* ── flow diagrams: rails with travelling packets, staged on scroll ─────── */
+.flow3{display:flex;align-items:stretch;gap:0;margin:14px 0 24px}
+.flow3 .fnode{border:1px solid var(--border);border-radius:4px;background:var(--panel);
+  padding:15px 17px;min-width:132px;transition:border-color .2s,background .2s}
+.flow3 .fnode.hot{border-color:var(--accent);background:var(--raised)}
+.fnode .t{color:var(--fg);font-weight:700;font-size:13px;display:block}
+.fnode .s{color:var(--dim);font-size:11.5px;display:block;margin-top:4px;line-height:1.45}
+.fwire{position:relative;flex:1 1 40px;min-width:36px;align-self:center;height:2px;
+  background:var(--border);margin:0 6px}
+.fwire i{position:absolute;top:-3px;left:0;width:9px;height:9px;background:var(--accent);
+  border-radius:2px;box-shadow:0 0 8px color-mix(in srgb,var(--accent) 75%,transparent);
+  animation:pktx 1.7s linear infinite;animation-play-state:paused}
+.fwire i.b{animation-delay:.85s}
+.fgrid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;flex:2}
+.fgrid3>*{min-width:0}
+.fwires{display:flex;flex-direction:column;gap:8px;flex:1 1 90px;align-self:center;margin:0 8px}
+.fwires .fwire{flex:none;align-self:stretch;margin:0;min-width:0}
+   /* NB: base .fwire is align-self:center for the row layout of .flow3 — inside the
+      column .fwires that centers on the HORIZONTAL axis and collapses the rail to 0px,
+      which is why the server⇄plugin animation had nowhere to travel on desktop. */
+.fwire.back i{animation-name:pktback}
+.wlabel{font-size:10.5px;color:var(--dim);letter-spacing:.04em}
+.wlabel .m{color:var(--pale)}
+/* NB: the reveal rule must out-specify the hidden one — `.seq .fgrid3 .fnode`
+   (4 classes) used to beat `.in .fnode` (3), so the audit trio never appeared. */
+.flow3.seq .fnode{opacity:0;transform:translateY(6px);
+  transition:opacity .45s ease,transform .45s ease}
+.flow3.seq.in .fnode{opacity:1;transform:none;transition-delay:calc(var(--i,0)*.13s)}
+.flow3.in .fwire i{animation-play-state:running}
+@keyframes pktx{from{left:-8px}to{left:100%}}
+@keyframes pktback{from{left:100%}to{left:-8px}}
+@keyframes pkty{from{top:-8px}to{top:100%}}
+@keyframes pktbacky{from{top:100%}to{top:-8px}}
+@media(max-width:820px){
+  .flow3{flex-direction:column;align-items:stretch}
+  .fwire{width:3px;height:48px;min-width:0;flex:none;margin:10px auto;border-radius:2px}
+  .fwire i{left:-3.5px;top:0;width:10px;height:10px;animation-name:pkty}
+  .fwire.back i{animation-name:pktbacky}
+  /* two lanes side by side — stacked rails used to overlap into one thin line */
+  .fwires{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 34px;align-items:center;
+    justify-items:center;width:100%;margin:12px 0 6px;min-width:0}
+  .fwires .wlabel{grid-column:1 / -1;text-align:center}
+  .fgrid3{grid-template-columns:minmax(0,1fr)}
+  .wlabel{text-align:center}
+}
+
+.diffgrid.in .dline{animation:rise .35s ease-out backwards;
+  animation-delay:calc(var(--i,0) * 45ms)}
+
+@keyframes blink{50%{opacity:0}}
+@keyframes rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.reveal{opacity:0;transform:translateY(8px);transition:opacity .45s ease,transform .45s ease}
+.reveal.in{opacity:1;transform:none}
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+  .reveal{opacity:1;transform:none}
+  .flow3 .fnode{opacity:1;transform:none}
+  .tln{opacity:1}
+}
+
+/* ── phones & small tablets: no zooming out required ─────────────────────── */
+@media(max-width:720px){
+  body{font-size:14.5px;padding-top:60px;padding-bottom:44px;line-height:1.8}
+  main{padding:20px 15px 34px}
+  section{padding:34px 0}
+  .win{padding:19px 16px 16px;margin-bottom:20px}
+  .win::before{left:11px;font-size:10.5px}
+  pre{font-size:12px;line-height:1.7}
+  h1{font-size:clamp(30px,11vw,44px)}
+  h2{font-size:clamp(21px,6.6vw,27px)}
+  .lede{font-size:15px}
+  h3{margin:36px 0 14px}
+  .badges{gap:9px}
+  .badges .tag{font-size:10.5px;padding:4px 9px}
+  .cta{gap:10px}
+  .btn{flex:1 1 100%;justify-content:center;padding:14px 14px;font-size:13.5px;
+       min-height:48px}   /* thumb-sized tap targets */
+  .irow{flex-wrap:wrap;padding:12px 13px;gap:8px}
+  .irow code{flex:1 1 100%;font-size:11.8px;order:2}
+  .irow .pr{order:1}
+  .irow .chip{order:3;margin-left:auto;min-height:40px;padding:7px 13px}
+  .tab{padding:0 13px;min-height:42px}
+  .step{padding:0 0 20px 22px}
+  .dline{padding:12px 14px 12px 30px;font-size:13px}
+  summary{padding:15px 16px 15px 34px}
+  details p{padding:0 16px 16px 34px}
+  .kv{gap:3px 10px;font-size:12px}
+  .runbar{font-size:11px}
+  #sb-right,.seg .opt{display:none}
+  #chrome-bottom{height:38px}
+  .fab{display:grid}
+  footer{font-size:11.5px;gap:10px}
+}
+@media(max-width:1024px){.fab{display:grid}}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">skip to content</a>
+
+<!-- ═══ top chrome ═══════════════════════════════════════════════════════ -->
+<header class="chrome" id="chrome-top">
+  <div class="tabbar">
+    <div class="tabs">
+      <a class="tab active" href="#top">kn9t ▸ landing</a>
+      <a class="tab" href="architecture.html">architecture</a>
+      <a class="tab" href="demo.html">demos</a>
+      <a class="tab" href="https://github.com/96Ems/kn9t/blob/main/README.md">readme.md</a>
+      <a class="tab" href="https://github.com/96Ems/kn9t/blob/main/DESIGN.md">design.md</a>
+      <a class="tab" href="https://github.com/96Ems/kn9t/blob/main/API.md">api.md</a>
+    </div>
+    <div class="tabbar-right">
+      <button class="chip" id="theme-btn" title="toggle theme (L)">◐ light</button>
+      <a class="chip" href="https://github.com/96Ems/kn9t">github <b>↗</b></a>
+    </div>
+  </div>
+  <div class="crumb">
+    <span>~/dev/kn9t</span><span class="sep">▸</span><span>site</span><span class="sep">▸</span>
+    <span class="cur" id="crumb-cur">index.html</span>
+    <span class="crumb-right"><span>UTF-8</span><span>LF</span><span>Rust 1.98+</span></span>
+  </div>
+</header>
+
+<div class="frame">
+
+  <!-- ═══ explorer (30_sidebar_left.lua) ═════════════════════════════════ -->
+  <aside class="col explorer">
+    <div class="side-title">explorer</div>
+    <div class="tree-root">▾ kn9t/</div>
+    <a class="row" data-sec="what"><span class="g">▸</span><span class="ext-md">what.md</span></a>
+    <a class="row" data-sec="how"><span class="g">▸</span><span class="ext-md">how.md</span></a>
+    <a class="row" data-sec="primitives"><span class="g">▸</span><span class="ext-json">primitives.md</span></a>
+    <a class="row" data-sec="extend"><span class="g">▸</span><span class="ext-sh">extend.rs</span></a>
+    <a class="row" data-sec="limits"><span class="g">▸</span><span class="ext-diff">limits.diff</span></a>
+    <a class="row" data-sec="install"><span class="g">▸</span><span class="ext-sh">install.sh</span></a>
+    <a class="row" data-sec="faq"><span class="g">▸</span><span class="ext-db">faq.md</span></a>
+    <div class="tree-root">▾ docs/</div>
+    <a class="row" href="architecture.html"><span class="g">▸</span>architecture.html<span class="sub">how</span></a>
+    <a class="row" href="demo.html"><span class="g">▸</span>demo.html<span class="sub">7 films</span></a>
+    <a class="row" href="https://github.com/96Ems/kn9t/blob/main/README.md"><span class="g">▸</span>README.md</a>
+    <a class="row" href="https://github.com/96Ems/kn9t/blob/main/DESIGN.md"><span class="g">▸</span>DESIGN.md<span class="sub">why</span></a>
+    <a class="row" href="https://github.com/96Ems/kn9t/blob/main/docs/ARCHITECTURE.md"><span class="g">▸</span>ARCHITECTURE.md<span class="sub">§14</span></a>
+    <a class="row" href="https://github.com/96Ems/kn9t/blob/main/API.md"><span class="g">▸</span>API.md</a>
+    <a class="row" href="https://github.com/96Ems/kn9t/blob/main/docs/CONFIG.md"><span class="g">▸</span>CONFIG.md</a>
+  </aside>
+
+  <!-- ═══ content ════════════════════════════════════════════════════════ -->
+  <main id="main">
+
+    <!-- ── hero ── -->
+    <section class="hero" id="top">
+      <p class="eyebrow">rust · os threads · no async · mit</p>
+      <h1>kn9t<span class="cur">▌</span></h1>
+      <p class="lede">
+        The open source coding agent <b>you can audit</b>. One <code>Event</code> is the
+        wire, the log, and the truth — every session replays from an append-only
+        SQLite file. Tools, providers, policy and compaction are all plugins.
+      </p>
+
+      <div class="badges">
+        <span class="tag acc">MIT · open source</span>
+        <span class="tag">no tokio</span>
+        <span class="tag">~49 K LOC Rust</span>
+        <span class="tag">1000+ tests</span>
+        <span class="tag">13 plugins · 4 languages</span>
+        <span class="tag warn">pre-1.0</span>
+      </div>
+
+      <h3 style="margin-top:26px">install — rust 1.98+</h3>
+      <div class="irow">
+        <span class="pr">›</span>
+        <code id="cmd-install">git clone https://github.com/96Ems/kn9t &amp;&amp; cd kn9t &amp;&amp; cargo build --release</code>
+        <button class="chip" id="copy-install" data-copy="cmd-install">⧉ copy</button>
+      </div>
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/96Ems/kn9t">GitHub ↗</a>
+        <a class="btn ghost" href="#install">Get started</a>
+        <a class="btn ghost" href="architecture.html"><b>How kn9t works</b> ▸</a>
+        <a class="btn ghost" href="demo.html"><b>Demos</b> ▸</a>
+        <a class="btn ghost" href="#limits">The honest limits</a>
+      </div>
+
+      <div class="win plain" data-title="kn9t chat --json &quot;reply with exactly: HELLO&quot;">
+        <div class="term-run"><button class="chip" id="replay" title="replay the run">↻ replay</button></div>
+        <pre id="term"><span class="tln" style="animation-delay:.15s"><span class="c-vio">$</span> kn9t chat --json <span class="c-amb">"reply with exactly: HELLO"</span></span>
+<span class="tln" style="animation-delay:.55s"><span class="c-grn">{"kind":"session","model":{"provider":"opencode-go","id":"deepseek-v4-flash"}}</span></span>
+<span class="tln" style="animation-delay:.85s">{"kind":"prompt","text":"reply with exactly: HELLO"}</span>
+<span class="tln" style="animation-delay:1.15s"><span class="c-dim">{"kind":"turn_started","turn":1}</span></span>
+<span class="tln" style="animation-delay:1.5s">{"kind":"text_delta","delta":"HELLO"}</span>
+<span class="tln" style="animation-delay:1.85s">{"kind":"message_appended","msg":{"role":"assistant","content":[{"text":"HELLO"}]}}</span>
+<span class="tln" style="animation-delay:2.2s">{"kind":"usage_recorded","tokens":{"input":1354,"output":14},"cost_usd":0.000193}</span>
+<span class="tln" style="animation-delay:2.5s"><span class="c-dim">{"kind":"turn_ended","stop":"stop"}</span><span class="cur">▌</span></span></pre>
+        <div class="runbar">
+          <span class="blk" id="run-phase" style="background:var(--dim)">idle</span>
+          <span class="spin" id="run-spin" style="visibility:hidden">⠋</span>
+          <span class="lbl">stdout</span><span class="val">1 JSON object / line</span>
+          <span class="lbl">$</span><span class="money" id="run-cost">$0.000193</span>
+          <span id="run-ok" style="opacity:1">✓ real run · deepseek-v4-flash</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── 01 what ── -->
+    <section id="what">
+      <p class="eyebrow">01 — what it is</p>
+      <h2>An agent you can read back afterwards.</h2>
+      <p class="lede">
+        kn9t is a single-user, localhost coding agent written in Rust. It talks to your
+        model, runs tools, and streams to a terminal UI or to any HTTP client — while
+        writing every durable fact to a log you can replay months later.
+      </p>
+      <ul class="feat">
+        <li><b>Events are the truth</b> — one enum is the SSE frame, the SQLite row, and
+          the input that reconstructs the session. They are the same bytes.</li>
+        <li><b>Everything is a plugin</b> — tools, providers, policy, compaction,
+          subagents and MCP bridges run as subprocesses. The core grows seams, not features.</li>
+        <li><b>Auditable by construction</b> — an append-only SQLite log you can query with
+          the <code>sqlite3</code> CLI; folding it rebuilds any session exactly.</li>
+        <li><b>Any model</b> — OpenAI-compatible endpoints, Anthropic, or your own
+          provider plugin. Prices are hand-written per model and frozen at write time.</li>
+        <li><b>Scriptable</b> — JSONL on stdout, a localhost HTTP API, and
+          <code>--json</code> output made for <code>jq</code>.</li>
+        <li><b>One writer, N readers</b> — lease-based sessions: three clients can watch a
+          session over SSE while one drives it.</li>
+        <li><b>No async runtime</b> — OS threads and plain <code>fn</code> traits.
+          <code>tokio</code>-free by construction.</li>
+      </ul>
+
+      <h3>the same bytes, in three places</h3>
+      <div class="flow3" data-diagram>
+        <div class="fnode hot" style="flex:0 0 auto">
+          <span class="t">Event · seq 42</span>
+          <span class="s">{"kind":"text_delta",<br>&nbsp;&nbsp;"delta":"HELLO"}</span>
+        </div>
+        <div class="fwire"><i></i><i class="b"></i></div>
+        <div class="fgrid3">
+          <div class="fnode"><span class="t">sse frame</span><span class="s">what the client sees, live</span></div>
+          <div class="fnode"><span class="t">events row</span><span class="s">what SQLite keeps, forever</span></div>
+          <div class="fnode"><span class="t">fold() replay</span><span class="s">what rebuilds the session</span></div>
+        </div>
+      </div>
+      <p class="muted">
+        Written once as an append-only fact, seen everywhere it matters — which is why
+        auditing a session is a <code>sqlite3</code> query, not archaeology.
+      </p>
+    </section>
+
+    <!-- ── 02 how ── -->
+    <section id="how">
+      <p class="eyebrow">02 — how it works</p>
+      <h2>One turn, end to end.</h2>
+      <p class="lede">
+        Six steps, one thread that may spend money. Everything else holds trait
+        objects and never calls a provider.
+      </p>
+      <div class="flow">
+        <div class="step">
+          <h4><span class="n">01</span>lease</h4>
+          <p>Your prompt arrives with the session's write lease. Watchers stream over SSE
+          and never need one.</p>
+        </div>
+        <div class="step">
+          <h4><span class="n">02</span>plan</h4>
+          <p><code>plan_request()</code> folds the log into a provider request: repairs
+          tool args, closes orphaned calls, compacts past ~80% of the window, places
+          cache breakpoints.</p>
+        </div>
+        <div class="step">
+          <h4><span class="n">03</span>stream</h4>
+          <p>The provider does wire mapping only. Retry is allowed before the first byte,
+          never after — you have already seen something.</p>
+        </div>
+        <div class="step">
+          <h4><span class="n">04</span>policy</h4>
+          <p>Every tool call is voted on by policy plugins — <code>Allow</code>,
+          <code>Ask</code>, <code>Deny</code>, <code>Replace</code>. The strictest vote
+          wins, so load order cannot change the outcome.</p>
+        </div>
+        <div class="step">
+          <h4><span class="n">05</span>commit</h4>
+          <p>Durable facts are written in one transaction — <code>seq</code> assigned
+          inside it — then broadcast. The log never waits on a queue.</p>
+        </div>
+        <div class="step">
+          <h4><span class="n">06</span>idle</h4>
+          <p>Even an abort closes every tool call with a result. The transcript never
+          contains an orphaned tool call — the one shape providers reject.</p>
+        </div>
+      </div>
+      <p class="muted">
+        Durable events carry a <code>seq</code> and are never lost; transient ones
+        (stream deltas, progress) may be — losing them is self-healing. Publishing an
+        unpersisted durable event is a <b>compile error</b>, not a code-review comment.
+      </p>
+      <p class="muted">
+        That was the trailer. <a href="architecture.html">▸ architecture.html</a> is the
+        full tour — read from the source with <code>file:line</code> citations: the event
+        log, state as a fold, the SSE attach protocol, the plugin wire, and exactly how
+        <b>hot reload</b> works.
+      </p>
+
+      <h3>sse without gaps or duplicates</h3>
+      <div class="flow3" data-diagram>
+        <div class="fnode"><span class="t">subscribe</span><span class="s">first — before any read</span></div>
+        <div class="fwire"><i></i></div>
+        <div class="fnode"><span class="t">replay</span><span class="s">durable rows with seq &gt; cursor</span></div>
+        <div class="fwire"><i></i></div>
+        <div class="fnode"><span class="t">watermark</span><span class="s">drop buffered events ≤ watermark</span></div>
+        <div class="fwire"><i></i></div>
+        <div class="fnode hot"><span class="t">clean stream</span><span class="s">no gap, no duplicate</span></div>
+      </div>
+      <p class="muted">
+        Attach order is the whole trick: read first and you can miss whatever lands
+        between the read and the subscription. There is a deterministic regression test
+        for that race — and a script asserting the test actually runs.
+      </p>
+    </section>
+
+    <!-- ── 03 primitives ── -->
+    <section id="primitives">
+      <p class="eyebrow">03 — design</p>
+      <h2>Primitives, not features.</h2>
+      <p class="lede">
+        Nothing user-facing is built in. What other agents bake into the core, kn9t
+        ships as plugins — so the core stays minimal and the behaviour stays yours.
+      </p>
+      <div class="prim">
+        <div class="it"><b>No built-in tools</b>
+          <span><code>bash</code>, <code>read</code>, <code>edit</code>,
+          <code>write</code> ship as the <code>kn9t-tools</code> plugin.</span></div>
+        <div class="it"><b>No built-in safety</b>
+          <span>Risk judgement is a policy plugin. With none installed,
+          <b>everything is allowed</b> — deliberately, and documented.</span></div>
+        <div class="it"><b>No built-in compaction</b>
+          <span>A plugin picks keep / summarize / drop per tool call, using the
+          session's own model and budget.</span></div>
+        <div class="it"><b>No built-in subagents</b>
+          <span>They are real sessions spawned through the host API — visible,
+          forkable, and billed where the work happened.</span></div>
+        <div class="it"><b>No MCP in the core</b>
+          <span>Bridged by a plugin. The core doesn't know the protocol exists.</span></div>
+        <div class="it"><b>No async runtime</b>
+          <span>One active provider stream does not need futures. Threads and
+          plain <code>fn</code>, no <code>.await</code> anywhere.</span></div>
+        <div class="it"><b>No model registry</b>
+          <span>Prices are hand-written per model — a later price change can never
+          rewrite what you already spent.</span></div>
+        <div class="it"><b>No second wiring path</b>
+          <span>The TUI speaks HTTP only and cannot link the core, so interactive
+          and scripted modes cannot drift apart.</span></div>
+      </div>
+    </section>
+
+    <!-- ── 04 extend ── -->
+    <section id="extend">
+      <p class="eyebrow">04 — extend</p>
+      <h2>Any language that can read a line of JSON.</h2>
+      <p class="lede">
+        The plugin protocol is newline-delimited JSON on stdin/stdout — debuggable
+        with <code>cat</code>. Capabilities are negotiated at handshake, and the host
+        exposes <b>20 operations</b> and <b>9 hooks</b> plugins call back into.
+      </p>
+      <div class="flow3 duo" data-diagram>
+        <div class="fnode hot" style="flex:0 0 auto">
+          <span class="t">kn9t-server</span><span class="s">the host</span>
+        </div>
+        <div class="fwires">
+          <div class="wlabel">host ▸ plugin <span class="m">· Hello · Hook · Cancel · Shutdown · ApiResult</span></div>
+          <div class="fwire"><i></i><i class="b"></i></div>
+          <div class="fwire back"><i></i></div>
+          <div class="wlabel">plugin ▸ host <span class="m">· Hello · Request · Result · Chunk · Done</span></div>
+        </div>
+        <div class="fnode hot" style="flex:0 0 auto">
+          <span class="t">plugin process</span><span class="s">rust · go · python · ts</span>
+        </div>
+      </div>
+      <div class="wingrid g2">
+        <div class="win" data-title="host api">
+          <p class="muted" style="margin-bottom:10px">sessions · <code>session_read</code>
+            <code>session_create</code> <code>session_fork</code>
+            <code>session_prompt</code><br>
+            model · <code>provider_complete</code><br>
+            tools · <code>tool_list</code> <code>tool_execute</code>
+            <code>tool_visibility</code><br>
+            lifecycle · <code>plugin_*</code><br>
+            ui · <code>ui_register_lua</code> <code>ui_push</code> <code>…</code></p>
+          <p style="margin:0">A plugin can drive its own TUI view in Lua — no
+          per-plugin widgets in the client.</p>
+        </div>
+        <div class="win" data-title="hooks">
+          <p class="muted" style="margin-bottom:10px"><code>before_tool_call</code>
+            <code>after_tool_call</code> <code>before_request</code>
+            <code>should_stop_after_turn</code> <code>prepare_next_turn</code>
+            <code>get_steering</code> <code>get_followup</code>
+            <code>get_api_key</code> <code>tool_call</code></p>
+          <p style="margin:0">Every phase of a turn is a seam, including the ones
+          that decide what happens next.</p>
+        </div>
+      </div>
+
+      <h3>writing one, in rust</h3>
+      <div class="win plain" data-title="src/lib.rs">
+<pre><code class="language-rust">use kn9t_plugin_sdk::{Tool, ToolCtx, ToolOutput, CancelToken, wire::ToolSpec};
+use serde_json::{json, Value};
+
+struct MyTool;
+
+impl Tool for MyTool {
+    fn spec(&amp;self) -&gt; ToolSpec {
+        ToolSpec {
+            name: "my_tool".into(),
+            description: "does X".into(),
+            schema: json!({"type": "object", "properties": {"path": {"type": "string"}}}),
+            parallel_safe: true,
+            hidden: false,
+        }
+    }
+
+    fn execute(&amp;self, args: &amp;Value, ctx: &amp;ToolCtx, cancel: &amp;CancelToken)
+        -&gt; Result&lt;ToolOutput, String&gt;
+    {
+        ctx.progress.send("starting…");              // streams as ToolProgress
+        if cancel.is_cancelled() { return Err("cancelled".into()); }
+        Ok(ToolOutput { content: vec![], is_error: false })
+    }
+}</code></pre>
+      </div>
+      <p class="muted">
+        The SDK has zero workspace dependencies and is publishable — a third-party
+        plugin needs nothing from this repo.
+      </p>
+
+      <h3>providers are plugins too</h3>
+      <p>
+        A provider is either in-process (OpenAI-compatible) or a subprocess plugin —
+        <code>kn9t-anthropic</code> adds the <b>Anthropic Messages API</b> to kn9t
+        without touching the core. Same door for <b>MCP</b>
+        (<code>kn9t-mcp</code> bridges Jira, GitHub and friends), for
+        <b>agent skills</b> (<code>kn9t-skills</code>) and for project instructions
+        (<code>kn9t-agents-md</code> injects your <code>AGENTS.md</code> into context).
+      </p>
+
+      <h3>the shelf</h3>
+      <div class="cta" style="margin:0 0 20px">
+        <a class="btn primary" href="https://github.com/96Ems/kn9t-plugins">96Ems/kn9t-plugins ↗</a>
+        <a class="btn ghost" href="https://github.com/96Ems/kn9t/blob/main/docs/PLUGIN_DEVELOPMENT.md">Write a plugin</a>
+      </div>
+      <div class="wingrid g2">
+        <div class="win plain" data-title="what's in the box">
+<pre><span class="c-sil">kn9t-anthropic</span>       <span class="c-dim">Anthropic Messages API provider</span>    <span class="c-vio">rust</span>
+<span class="c-sil">kn9t-agents-md</span>       <span class="c-dim">injects AGENTS.md into context</span>     <span class="c-vio">go</span>
+<span class="c-sil">kn9t-skills</span>          <span class="c-dim">skills / capabilities system</span>       <span class="c-vio">python</span>
+<span class="c-sil">kn9t-mcp</span>             <span class="c-dim">bridges MCP servers (Jira, GitHub)</span> <span class="c-vio">python</span>
+<span class="c-sil">kn9t-policy</span>          <span class="c-dim">safety policy enforcement</span>          <span class="c-vio">python</span>
+<span class="c-sil">kn9t-compactor</span>       <span class="c-dim">context compaction</span>                 <span class="c-vio">ts</span>
+<span class="c-sil">kn9t-subagent</span>        <span class="c-dim">nested agent loops</span>                 <span class="c-vio">ts</span>
+<span class="c-sil">kn9t-ask-user</span>        <span class="c-dim">interactive user prompts</span>           <span class="c-vio">ts</span>
+<span class="c-sil">kn9t-websearch</span>       <span class="c-dim">web search</span>                         <span class="c-vio">rust</span>
+<span class="c-sil">kn9t-git-integration</span> <span class="c-dim">git diff rendering in the TUI</span>      <span class="c-vio">rust</span>
+<span class="c-sil">kn9t-plugin-manager</span>  <span class="c-dim">plugin management tools</span>            <span class="c-vio">rust</span></pre>
+        </div>
+        <div class="win plain" data-title="install one">
+<pre><span class="c-dim"># binary plugins — build, drop in, done</span>
+<span class="c-vio">$</span> cd kn9t-anthropic &amp;&amp; cargo build --release
+<span class="c-vio">$</span> cp target/release/kn9t-anthropic ~/.kn9t/plugins/
+
+<span class="c-dim"># interpreted plugins — pin the command</span>
+[[plugin]]
+name = <span class="c-grn">"kn9t-mcp"</span>
+cmd  = [<span class="c-grn">"python"</span>, <span class="c-grn">"-m"</span>, <span class="c-grn">"kn9t_mcp"</span>]</pre>
+        </div>
+      </div>
+      <p class="muted">
+        11 plugins there, plus <code>kn9t-tools</code> and the in-repo test fixture here:
+        <b>13 plugins in Rust, Go, Python and TypeScript</b>, MIT like the agent. Start at
+        <a href="https://github.com/96Ems/kn9t-plugins">github.com/96Ems/kn9t-plugins</a>,
+        and see
+        <a href="https://github.com/96Ems/kn9t/blob/main/docs/PLUGIN_DEVELOPMENT.md">PLUGIN_DEVELOPMENT.md</a>
+        to write your own.
+      </p>
+    </section>
+
+    <!-- ── 05 limits ── -->
+    <section id="limits">
+      <p class="eyebrow">05 — honesty</p>
+      <h2>The honest limits.</h2>
+      <p class="lede">
+        Every project says what it does. Here is what kn9t does not do for you —
+        drawn from its own findings list, not softened.
+      </p>
+      <div class="diffgrid">
+        <div class="diffcol">
+          <div class="diffhead del">− read before you run it</div>
+          <div class="dline del"><span class="sign">−</span><b>Not a sandbox.</b> Tools run with your privileges. Install
+            <code>kn9t-policy</code> before giving an agent anything you care about.</div>
+          <div class="dline del"><span class="sign">−</span><b>Secrets aren't redacted.</b> A key read from a <code>.env</code>
+            lands in the transcript and in the log, verbatim.</div>
+          <div class="dline del"><span class="sign">−</span><b>Single user, localhost.</b> One writer per session by design —
+            not a server for a team.</div>
+          <div class="dline del"><span class="sign">−</span><b>Pre-1.0.</b> The config format and plugin protocol may still
+            change before the first stable release.</div>
+        </div>
+      </div>
+      <p class="muted">
+        The engineering-level findings — known debt, refactor targets, rejected
+        alternatives — live where they belong:
+        <a href="https://github.com/96Ems/kn9t/blob/main/docs/ARCHITECTURE.md">ARCHITECTURE.md §14</a>
+        and <a href="https://github.com/96Ems/kn9t/blob/main/DESIGN.md">DESIGN.md</a>.
+      </p>
+    </section>
+
+    <!-- ── 06 install ── -->
+    <section id="install">
+      <p class="eyebrow">06 — getting started</p>
+      <h2>Clone, build, pick a model.</h2>
+      <div class="wingrid g2">
+        <div class="win plain" data-title="bash · build">
+<pre><span class="c-dim"># the agent + the default tools plugin</span>
+<span class="c-vio">$</span> git clone https://github.com/96Ems/kn9t
+<span class="c-vio">$</span> cd kn9t &amp;&amp; cargo build --release
+<span class="c-vio">$</span> cd plugins/kn9t-tools &amp;&amp; cargo build --release
+
+<span class="c-dim"># drop plugin binaries in ~/.kn9t/plugins/
+# they are auto-discovered at startup</span></pre>
+        </div>
+        <div class="win plain" data-title="bash · use">
+<pre><span class="c-vio">$</span> kn9t                  <span class="c-dim"># TUI — starts the server</span>
+<span class="c-vio">$</span> kn9t chat <span class="c-amb">"add a test"</span>
+<span class="c-vio">$</span> kn9t chat --json <span class="c-amb">"…"</span> | jq <span class="c-amb">'select(.kind=="text_delta")|.delta'</span>
+<span class="c-vio">$</span> kn9t attach           <span class="c-dim"># observe + write via lease</span>
+<span class="c-vio">$</span> kn9t cost --group-by model</pre>
+        </div>
+      </div>
+
+      <h3>one provider — every model priced</h3>
+      <p class="muted">
+        Models are auto-discovered: <code>discover = true</code> (the default) fetches
+        <code>/models</code> and registers them. But a discovered model carries
+        <b>no prices</b> — list yours and <code>kn9t cost</code> reports the
+        <b>real dollars</b> of every session, frozen at write time. Here is the full
+        OpenCode Go example.
+      </p>
+      <div class="win plain" data-title="~/.kn9t/config.toml · full opencode-go example">
+        <div class="term-run"><button class="chip" id="copy-config" data-copy="cmd-config">⧉ copy</button></div>
+<pre><code class="language-ini" id="cmd-config"># ~/.kn9t/config.toml — the full OpenCode Go example
+default_model = "deepseek-v4-flash"
+
+[provider.opencode-go]
+kind     = "openai"
+base_url = "https://opencode.ai/zen/go/v1"
+api_key  = "env:OPENCODE_API_KEY"
+
+[provider.opencode-go.quirks]
+usage_in_stream = true
+session_header  = "x-opencode-session"   # required by OpenCode Go
+thinking_replay = "strip"
+
+[[model]]
+provider = "opencode-go"
+id       = "deepseek-v4-pro"
+ctx      = 131072
+max_out  = 8192
+price_in  = 0.435     # USD per 1M tokens
+price_out = 0.87
+price_cache_read = 0.0036
+
+[[model]]
+provider = "opencode-go"
+id       = "deepseek-v4-flash"
+ctx      = 131072
+max_out  = 8192
+price_in  = 0.14
+price_out = 0.28
+price_cache_read = 0.0028
+
+[[model]]
+provider = "opencode-go"
+id       = "kimi-k3"
+ctx      = 131072
+max_out  = 8192
+price_in  = 0.60
+price_out = 1.80
+
+[[model]]
+provider = "opencode-go"
+id       = "kimi-k2.7-code"
+ctx      = 131072
+max_out  = 8192
+price_in  = 0.60
+price_out = 1.80
+
+[[model]]
+provider = "opencode-go"
+id       = "kimi-k2.6"
+ctx      = 131072
+max_out  = 8192
+price_in  = 0.60
+price_out = 1.80
+
+[[model]]
+provider = "opencode-go"
+id       = "glm-5.3-flash"
+ctx      = 131072
+max_out  = 8192
+price_in  = 0.10
+price_out = 0.40
+
+[[model]]
+provider = "opencode-go"
+id       = "glm-5.3"
+ctx      = 131072
+max_out  = 8192
+price_in  = 1.00
+price_out = 2.00
+
+[[model]]
+provider = "opencode-go"
+id       = "glm-5.2"
+ctx      = 131072
+max_out  = 8192
+price_in  = 1.00
+price_out = 2.00
+
+[[model]]
+provider = "opencode-go"
+id       = "mimo-v2.5"
+ctx      = 131072
+max_out  = 8192
+price_in  = 0.03
+price_out = 0.12
+
+[[model]]
+provider = "opencode-go"
+id       = "mimo-v2.5-pro"
+ctx      = 131072
+max_out  = 8192
+price_in  = 0.10
+price_out = 0.40
+
+[[model]]
+provider = "opencode-go"
+id       = "hy3"
+ctx      = 131072
+max_out  = 8192
+price_in  = 0.50
+price_out = 1.50
+
+[[model]]
+provider = "opencode-go"
+id       = "grok-4.6"
+ctx      = 131072
+max_out  = 8192
+price_in  = 2.00
+price_out = 6.00
+
+[[model]]
+provider = "opencode-go"
+id       = "minimax-m3"
+ctx      = 1048576
+max_out  = 16384
+price_in  = 0.15
+price_out = 0.60
+
+[[model]]
+provider = "opencode-go"
+id       = "minimax-m2.7"
+ctx      = 1048576
+max_out  = 16384
+price_in  = 0.15
+price_out = 0.60
+
+[[model]]
+provider = "opencode-go"
+id       = "longcat-2.0"
+ctx      = 131072
+max_out  = 8192
+price_in  = 0.10
+price_out = 0.40</code></pre>
+      </div>
+      <p class="muted">
+        The first-run bootstrap writes this file for you, fully commented — this is what
+        a complete provider looks like. Provider quirks are declared here too, never
+        sniffed from a URL. Full reference:
+        <a href="https://github.com/96Ems/kn9t/blob/main/docs/CONFIG.md">CONFIG.md</a>;
+        CLI and HTTP API are in
+        <a href="https://github.com/96Ems/kn9t/blob/main/API.md">API.md</a>.
+      </p>
+    </section>
+
+    <!-- ── 07 faq ── -->
+    <section id="faq">
+      <p class="eyebrow">07 — faq</p>
+      <h2>Questions people ask first.</h2>
+      <details>
+        <summary>What is kn9t, exactly?</summary>
+        <p>A single-user coding agent that runs on your machine: a Rust server holding
+        the model conversation, the tool loop and an append-only session log; a terminal
+        UI; and a localhost HTTP API so anything can drive it. Everything user-facing —
+        tools, policy, compaction — is a subprocess plugin.</p>
+      </details>
+      <details>
+        <summary>Is it free?</summary>
+        <p>Yes — MIT, no strings. You bring a model: an API key or a subscription
+        endpoint. There is no generated model registry and no telemetry, so your spend
+        is whatever your provider bills, tracked to the cent in the log.</p>
+      </details>
+      <details>
+        <summary>Does it phone home?</summary>
+        <p>No. The server listens on loopback only and rejects any request carrying an
+        <code>Origin</code> header, so a web page cannot drive it. The only outbound
+        traffic is to the model provider you configure.</p>
+      </details>
+      <details>
+        <summary>Which models can I use?</summary>
+        <p>Anything OpenAI-compatible, Anthropic, or anything you wrap in a provider
+        plugin — in-process or subprocess. Provider quirks (max-tokens field, system
+        role, reasoning form, cache headers) are declared in config.</p>
+      </details>
+      <details>
+        <summary>Why no async?</summary>
+        <p>The workload is a handful of modules around one active provider stream, not
+        10k connections. Blocking I/O keeps every trait a plain <code>fn</code>
+        returning a value — and the whole loop testable offline against replayed raw
+        provider bytes.</p>
+      </details>
+      <details>
+        <summary>Is it ready for daily use?</summary>
+        <p>It is pre-1.0: expect config and plugin-protocol changes before the first
+        stable release. v1 is implemented and verified end to end, with 1000+ tests —
+        but read <a href="#limits">the honest limits</a> first.</p>
+      </details>
+    </section>
+
+    <footer>
+      <span class="brand">kn9t<i>_</i></span>
+      <span>MIT © 2026 Emeric Clément</span>
+      <span class="r">
+        <a href="https://github.com/96Ems/kn9t">github</a>
+        <a href="https://github.com/96Ems/kn9t-plugins">plugins</a>
+        <a href="https://github.com/96Ems/kn9t/blob/main/README.md">readme</a>
+        <a href="https://github.com/96Ems/kn9t/blob/main/API.md">api</a>
+        <a href="#top">top ↑</a>
+      </span>
+    </footer>
+  </main>
+
+  <!-- ═══ inspector (40_sidebar_right.lua) ═══════════════════════════════ -->
+  <aside class="col inspector">
+    <div class="side-title">inspect</div>
+    <div class="win" data-title="kn9t.db" style="padding:16px">
+      <div class="kv">
+        <span class="k">rust</span><span class="v">1.98+</span>
+        <span class="k">license</span><span class="v ok">MIT</span>
+        <span class="k">crates</span><span class="v"><span class="ct" data-count="14">14</span></span>
+        <span class="k">tests</span><span class="v ok"><span class="ct" data-count="1000">1000</span>+</span>
+        <span class="k">routes</span><span class="v"><span class="ct" data-count="37">37</span></span>
+        <span class="k">events</span><span class="v"><span class="ct" data-count="26">26</span></span>
+        <span class="k">host ops</span><span class="v"><span class="ct" data-count="20">20</span></span>
+        <span class="k">hooks</span><span class="v"><span class="ct" data-count="9">9</span></span>
+        <span class="k">plugins</span><span class="v"><span class="ct" data-count="13">13</span> · 4 langs</span>
+        <span class="k">async</span><span class="v ok">0</span>
+        <span class="k">tokio</span><span class="v ok">none</span>
+      </div>
+    </div>
+    <div class="win" data-title="keys" style="padding:16px">
+      <div class="keys">
+        <span class="k">C-p</span><span class="v">commands</span>
+        <span class="k">1…7</span><span class="v">jump to section</span>
+        <span class="k">L</span><span class="v">light / dark</span>
+        <span class="k">G</span><span class="v">github</span>
+        <span class="k">Esc</span><span class="v">close overlay</span>
+      </div>
+    </div>
+    <div class="side-title" style="padding-top:16px">remember</div>
+    <div class="win plain" data-title="not a sandbox" style="padding:16px">
+      <p style="margin:0;font-size:11.5px;color:var(--dim)">
+        Tools run with your privileges. Install
+        <code style="font-size:10.5px">kn9t-policy</code> before letting an agent
+        loose on anything you care about.
+      </p>
+    </div>
+  </aside>
+</div>
+
+<!-- ═══ bottom chrome: status bar (50_status.lua) ════════════════════════ -->
+<footer class="chrome" id="chrome-bottom">
+  <div class="seg">
+    <span class="blk" id="sb-phase" style="background:var(--dim)">idle</span>
+    <span class="lbl">ctx</span>
+    <span class="blk" id="sb-ctx" style="background:var(--add)">0%</span>
+    <span class="val" id="sb-read">0.0k/0.0k</span>
+    <span class="lbl">$</span>
+    <span class="money">0.0000</span>
+    <span class="opt"><span class="lbl">crates</span><span class="val">14</span></span>
+    <span class="opt"><span class="lbl">routes</span><span class="val">37</span></span>
+    <span class="opt"><span class="lbl">events</span><span class="val">26</span></span>
+  </div>
+  <div id="sb-right">
+    <span class="k">C-p</span><span class="v">commands</span>
+    <span class="k">1…7</span><span class="v">jump</span>
+    <span class="k">L</span><span class="v">theme</span>
+    <span class="k">G</span><span class="v">github</span>
+  </div>
+</footer>
+
+<button class="fab" id="fab" title="commands">⌘</button>
+
+<!-- ═══ command palette ══════════════════════════════════════════════════ -->
+<div class="palette" id="palette" hidden>
+  <div class="pbox">
+    <div class="ptitle">commands<span class="r">kn9t</span></div>
+    <div class="pinput">
+      <span class="pr">›</span>
+      <input id="pq" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"
+             placeholder="type to filter…"><span class="cur">▌</span>
+    </div>
+    <ul class="plist" id="plist"></ul>
+    <div class="phint"><span class="k">↑↓</span> move &nbsp; <span class="k">enter</span> run &nbsp; <span class="k">esc</span> close</div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+<script>
+/* ═══ kn9t landing — vanilla JS, no framework. Maps 1:1 to TUI behaviour. */
+(function () {
+  "use strict";
+  var $ = function (s) { return document.querySelector(s); };
+  var $$ = function (s) { return Array.prototype.slice.call(document.querySelectorAll(s)); };
+
+  if (window.hljs) { window.hljs.highlightAll(); }
+
+  /* ── theme (Theme::dark / Theme::light) ── */
+  var root = document.documentElement, themeBtn = $("#theme-btn");
+  function setTheme(t) {
+    root.setAttribute("data-theme", t);
+    themeBtn.textContent = t === "dark" ? "◐ light" : "◐ dark";
+    try { localStorage.setItem("kn9t-theme", t); } catch (e) {}
+  }
+  try {
+    var saved = localStorage.getItem("kn9t-theme");
+    if (saved) { setTheme(saved); }
+  } catch (e) {}
+  function toggleTheme() { setTheme(root.getAttribute("data-theme") === "dark" ? "light" : "dark"); }
+  themeBtn.addEventListener("click", toggleTheme);
+
+  /* ── sections, explorer rows, breadcrumb ── */
+  var sections = $$("main section[id]");
+  var rows = {};
+  $$(".row[data-sec]").forEach(function (r) { rows[r.getAttribute("data-sec")] = r; });
+  var crumb = $("#crumb-cur");
+  var active = null;
+  function setActive(id) {
+    if (active === id) { return; }
+    active = id;
+    Object.keys(rows).forEach(function (k) { rows[k].classList.toggle("active", k === id); });
+    var r = rows[id];
+    crumb.textContent = r ? r.textContent.trim() : "index.html";
+  }
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (e.isIntersecting) { setActive(e.target.id); }
+    });
+  }, { rootMargin: "-80px 0px -65% 0px", threshold: 0 });
+  sections.forEach(function (s) { io.observe(s); });
+
+  /* reveal on scroll */
+  var rio = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (e.isIntersecting) { e.target.classList.add("in"); rio.unobserve(e.target); }
+    });
+  }, { threshold: 0.06 });
+  $$(".win, .flow, .diffgrid, .prim, .feat, .eyebrow, main h2, .lede").forEach(function (el) {
+    el.classList.add("reveal"); rio.observe(el);
+  });
+  /* diff lines cascade when their grid lands */
+  $$(".diffgrid").forEach(function (g) {
+    Array.prototype.forEach.call(g.querySelectorAll(".dline"), function (l, i) {
+      l.style.setProperty("--i", i % 11);
+    });
+  });
+  /* flow diagrams: stage the nodes, then the packets run the rails */
+  $$("[data-diagram]").forEach(function (g) {
+    g.classList.add("seq", "reveal");
+    rio.observe(g);
+    Array.prototype.forEach.call(g.querySelectorAll(".fnode"), function (n, i) {
+      n.style.setProperty("--i", i);
+    });
+  });
+
+  /* ── status bar: ctx % = scroll depth (TUI.context_color at .75 / .90) ── */
+  var sbPhase = $("#sb-phase"), sbCtx = $("#sb-ctx"), sbRead = $("#sb-read");
+  var readingTimer = null, pending = false;
+  function phase(text, colour) {
+    sbPhase.textContent = text;
+    sbPhase.style.background = colour;
+  }
+  function fmt(n) {
+    return n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n);
+  }
+  function paint() {
+    pending = false;
+    var max = document.documentElement.scrollHeight - innerHeight;
+    var frac = max > 0 ? Math.min(1, scrollY / max) : 0;
+    var pct = Math.round(frac * 100);
+    sbCtx.textContent = pct + "%";
+    sbCtx.style.background = pct >= 90 ? "var(--del)" : pct >= 75 ? "var(--alert)" : "var(--add)";
+    var total = document.body.innerText.length;
+    sbRead.textContent = fmt(Math.round(total * frac)) + "/" + fmt(total);
+  }
+  addEventListener("scroll", function () {
+    if (!paletteOpen) { phase("reading", "var(--accent)"); }
+    clearTimeout(readingTimer);
+    readingTimer = setTimeout(function () {
+      if (!paletteOpen) { phase("idle", "var(--dim)"); }
+    }, 500);
+    if (!pending) { pending = true; requestAnimationFrame(paint); }
+  }, { passive: true });
+  addEventListener("resize", paint, { passive: true });
+  paint();
+
+  /* ── command palette ── */
+  var palette = $("#palette"), plist = $("#plist"), pq = $("#pq");
+  var paletteOpen = false, sel = 0, filtered = [];
+  var items = [];
+  function go(id) {
+    var el = document.getElementById(id);
+    if (el) { el.scrollIntoView({ behavior: "smooth", block: "start" }); }
+  }
+  items.push({ g: "0", h: "hero", label: "top — kn9t", run: function () { go("top"); } });
+  /* keys 1…7 map to the page sections */
+  sections.slice(1).forEach(function (s, i) {
+    items.push({
+      g: String(i + 1), h: "section " + (i + 1), label: s.id,
+      run: function () { go(s.id); }
+    });
+  });
+  items.push({ g: "L", h: "view", label: "toggle light / dark", run: toggleTheme });
+  items.push({ g: "G", h: "↗", label: "open github repository", run: function () {
+    open("https://github.com/96Ems/kn9t", "_blank");
+  } });
+
+  function render() {
+    plist.innerHTML = "";
+    filtered.forEach(function (it, i) {
+      var li = document.createElement("li");
+      if (i === sel) { li.className = "sel"; }
+      var b = document.createElement("button");
+      b.innerHTML = '<span class="g">' + it.g + '</span><span>' + it.label +
+                    '</span><span class="h">' + it.h + '</span>';
+      b.addEventListener("click", function () { closePalette(); it.run(); });
+      li.appendChild(b);
+      plist.appendChild(li);
+    });
+  }
+  var query = "";
+  function filter() {
+    var q = query.toLowerCase();
+    filtered = items.filter(function (it) {
+      return (it.label + " " + it.h).toLowerCase().indexOf(q) >= 0;
+    });
+    sel = 0;
+    render();
+  }
+  pq.addEventListener("input", function () { query = pq.value; filter(); });
+  function openPalette() {
+    paletteOpen = true;
+    palette.hidden = false;
+    palette.classList.add("open");
+    query = ""; pq.value = ""; filter();
+    phase("palette", "var(--accent)");
+    setTimeout(function () { pq.focus(); }, 0);
+  }
+  function closePalette() {
+    paletteOpen = false;
+    palette.hidden = true;
+    palette.classList.remove("open");
+    phase("idle", "var(--dim)");
+  }
+  addEventListener("keydown", function (e) {
+    if (paletteOpen) {
+      if (e.key === "Escape") { closePalette(); e.preventDefault(); }
+      else if (e.key === "ArrowDown") { sel = Math.min(sel + 1, filtered.length - 1); render(); e.preventDefault(); }
+      else if (e.key === "ArrowUp") { sel = Math.max(sel - 1, 0); render(); e.preventDefault(); }
+      else if (e.key === "Enter") {
+        if (filtered[sel]) { closePalette(); filtered[sel].run(); }
+        e.preventDefault();
+      }
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === "p" || e.key === "P")) { openPalette(); e.preventDefault(); return; }
+    if (e.ctrlKey || e.metaKey || e.altKey) { return; }
+    if (e.key === "l" || e.key === "L") { toggleTheme(); }
+    else if (e.key === "g" || e.key === "G") { open("https://github.com/96Ems/kn9t", "_blank"); }
+    else if (e.key >= "1" && e.key <= "7") {
+      var s = sections[parseInt(e.key, 10)];   /* 1 → what … 7 → faq */
+      if (s) { go(s.id); }
+    }
+  });
+  palette.addEventListener("click", function (e) {
+    if (e.target === palette) { closePalette(); }
+  });
+
+  /* ── copy buttons (clipboard API needs a secure context — LAN http doesn't
+        have one, so fall back to the old execCommand path) ── */
+  function copyText(text, btn) {
+    function done() {
+      var old = btn.textContent;
+      btn.textContent = "✓ copied";
+      setTimeout(function () { btn.textContent = old; }, 1200);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () { legacy(); });
+    } else { legacy(); }
+    function legacy() {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand("copy"); done(); } catch (err) {}
+      document.body.removeChild(ta);
+    }
+  }
+  $$("[data-copy]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var el = document.getElementById(btn.getAttribute("data-copy"));
+      if (el) { copyText(el.textContent, btn); }
+    });
+  });
+
+  /* ── hero terminal: replay the JSONL run like real stdout ───────────────── */
+  var reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var term = $("#term");
+  var runData = $$("#term .tln").map(function (el) {
+    return { t: el.textContent.replace(/\u258C$/, ""), h: el.innerHTML };
+  });
+  var runPhase = $("#run-phase"), runSpin = $("#run-spin"),
+      runCost = $("#run-cost"), runOk = $("#run-ok");
+  var SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";   /* the TUI's braille spinner */
+  var spinTimer = null, runTimers = [], runToken = 0;
+
+  function cursor() {
+    var c = document.createElement("span");
+    c.className = "cur"; c.textContent = "▌";
+    return c;
+  }
+  function spin(on) {
+    clearInterval(spinTimer); spinTimer = null;
+    runSpin.style.visibility = on ? "visible" : "hidden";
+    if (on) {
+      var i = 0;
+      spinTimer = setInterval(function () {
+        i = (i + 1) % SPIN.length; runSpin.textContent = SPIN[i];
+      }, 90);
+    }
+  }
+  function runPhaseSet(text, colour) {
+    runPhase.textContent = text; runPhase.style.background = colour;
+  }
+  function costTo(v, ms) {
+    var t0 = performance.now();
+    (function step(now) {
+      var k = Math.min(1, (now - t0) / ms);
+      runCost.textContent = "$" + (v * k).toFixed(6);
+      if (k < 1) { requestAnimationFrame(step); }
+    })(t0);
+  }
+  function playRun() {
+    if (!runData.length) { return; }
+    runToken++;
+    var my = runToken;
+    runTimers.forEach(clearTimeout); runTimers = [];
+    term.innerHTML = "";
+    runOk.style.opacity = 0;
+    runCost.textContent = "$0.000000";
+    runPhaseSet("streaming", "var(--add)");
+    if (!paletteOpen) { phase("streaming", "var(--add)"); }
+    spin(true);
+    var li = 0;
+    function nextLine() {
+      if (my !== runToken) { return; }
+      if (li >= runData.length) {
+        runPhaseSet("idle", "var(--dim)");
+        spin(false);
+        runOk.style.opacity = 1;
+        if (!paletteOpen) { phase("idle", "var(--dim)"); }
+        return;
+      }
+      var d = runData[li++];
+      var span = document.createElement("span");
+      span.className = "tln";
+      span.style.opacity = 1;
+      span.style.animation = "none";
+      term.appendChild(span);
+      var i = 0;
+      var iv = setInterval(function () {
+        if (my !== runToken) { clearInterval(iv); return; }
+        i += 1 + Math.floor(Math.random() * 3);   /* bursty, like a real stream */
+        if (i >= d.t.length) {
+          clearInterval(iv);
+          span.innerHTML = d.h + "\n";
+          if (d.t.indexOf("usage_recorded") >= 0) { costTo(0.000193, 420); }
+          runTimers.push(setTimeout(nextLine,
+            d.t.indexOf("turn_ended") >= 0 ? 60 : 110 + Math.random() * 220));
+        } else {
+          span.textContent = d.t.slice(0, i);
+          span.appendChild(cursor());
+        }
+      }, 12);
+    }
+    runTimers.push(setTimeout(nextLine, 320));
+  }
+  var replayBtn = $("#replay");
+  if (replayBtn) { replayBtn.addEventListener("click", playRun); }
+  if (!reduce) { playRun(); }
+
+  /* ── inspector counters count up when the panel lands ── */
+  if (!reduce) {
+    var counted = false;
+    var cio = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (!e.isIntersecting || counted) { return; }
+        counted = true;
+        $$(".ct").forEach(function (el) {
+          var target = parseFloat(el.getAttribute("data-count")) || 0;
+          var t0 = performance.now();
+          (function step(now) {
+            var k = Math.min(1, (now - t0) / 900);
+            var ease = 1 - Math.pow(1 - k, 3);
+            el.textContent = String(Math.round(target * ease));
+            if (k < 1) { requestAnimationFrame(step); }
+          })(t0);
+        });
+      });
+    }, { threshold: 0.15 });
+    var insp = document.querySelector(".inspector");
+    if (insp) {
+      $$(".ct").forEach(function (el) { el.textContent = "0"; });
+      cio.observe(insp);
+    }
+  }
+
+  /* ── hero glow follows the pointer (fine pointers only) ── */
+  var hero = document.querySelector(".hero");
+  if (hero && matchMedia("(pointer:fine)").matches) {
+    var pPending = false, px = 0, py = 0;
+    hero.addEventListener("pointermove", function (e) {
+      var r = hero.getBoundingClientRect();
+      px = ((e.clientX - r.left) / r.width - 0.5) * 14;
+      py = ((e.clientY - r.top) / r.height - 0.5) * 10;
+      if (!pPending) {
+        pPending = true;
+        requestAnimationFrame(function () {
+          pPending = false;
+          hero.style.setProperty("--mx", px.toFixed(2) + "%");
+          hero.style.setProperty("--my", py.toFixed(2) + "%");
+        });
+      }
+    });
+  }
+
+  /* ── mobile: the ⌘ button opens the palette ── */
+  var fab = $("#fab");
+  if (fab) { fab.addEventListener("click", openPalette); }
+})();
+</script>
+</body>
+</html>

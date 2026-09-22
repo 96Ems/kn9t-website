@@ -1,0 +1,1511 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kn9t — how it works: events, threads, plugins, hot reload</title>
+<meta name="description" content="How kn9t works, read from the source: the append-only event log, state as a fold, one turn end to end, threads instead of futures, the SSE attach protocol, the plugin wire — and exactly how hot reload works. Every claim cites a file and a line.">
+<meta property="og:title" content="kn9t — how it works">
+<meta property="og:description" content="The internals, read from the source. State lives in an append-only event log — which is what makes hot reload safe. Every claim cites a file:line.">
+<meta property="og:type" content="website">
+<meta name="theme-color" content="#0E0E14">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230E0E14'/><rect x='2' y='2' width='28' height='28' rx='6' fill='none' stroke='%233F4652'/><text x='6' y='23' font-family='monospace' font-size='17' fill='%23D6DAE0'>k</text><rect x='16' y='11' width='8' height='13' fill='%238B5CF6'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;0,800;1,400&display=swap" rel="stylesheet">
+<style>
+/* ═════════════════════════════════════════════════════════════════════════
+   kn9t landing — styled after crates/kn9t-tui (theme.rs mascot palette).
+   Three colours carry meaning (PLAN §P7 D16):
+     accent  violet  — selection, focus, active tab, headings, mentions
+     alert   amber   — attention: a running tool, cost, an approval
+     chrome  silver  — everything else
+   green / red are reserved for diffs. Everything below obeys that.
+   ═════════════════════════════════════════════════════════════════════════ */
+:root{
+  /* Theme::dark() — palette:: */
+  --bg:#0E0E14;          /* INK          */
+  --panel:#16171D;       /* INK_PANEL    */
+  --raised:#1B172B;      /* INK_RAISED   */
+  --sel:#1E1A2E;         /* VIOLET_TINT  */
+  --accent:#8B5CF6;      /* VIOLET       */
+  --alert:#FBBF24;       /* AMBER        */
+  --add:#4ADE80;         /* GREEN (diff) */
+  --del:#F87171;         /* RED   (diff) */
+  --fg:#E4E8EE;          /* SILVER — brightened for screen contrast */
+  --dim:#A2AAB8;         /* SILVER_DIM                            */
+  --pale:#79808D;        /* SILVER_PALE                           */
+  --border:#4E5665;      /* SILVER_DEEP                           */
+  --ink:#0E0E14;         /* text ON a solid block */
+  --grid:rgba(214,218,224,.05);
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+}
+html[data-theme="light"]{
+  /* Theme::light() */
+  --bg:#F3F4F7;          /* PAPER        */
+  --panel:#E8EAEF;       /* PAPER_PANEL  */
+  --raised:#EDE9FE;      /* PAPER_RAISED */
+  --sel:#EDE9FE;
+  --accent:#6D28D9;      /* VIOLET_DEEP  */
+  --alert:#B45309;       /* AMBER_DEEP   */
+  --add:#147A3C;         /* GREEN_DEEP   */
+  --del:#B91C1C;         /* RED_DEEP     */
+  --fg:#2C323E;          /* SILVER_DEEP — darkened for contrast */
+  --dim:#565E6C;         /* SILVER_PALE                        */
+  --pale:#767E8B;
+  --border:#B9C0CB;
+  --ink:#F3F4F7;         /* PAPER — text on violet-deep blocks */
+  --grid:rgba(14,14,20,.05);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;background:var(--bg);color:var(--fg);
+  font-family:var(--mono);font-size:15px;line-height:1.78;
+  font-variant-ligatures:none;-webkit-font-smoothing:antialiased;
+  padding-top:66px;padding-bottom:36px;
+  overflow-x:clip;   /* no horizontal scroll → phones don't auto-zoom out */
+}
+body,.chrome,.win,.tab,.ask,.tw,.diffcol,.chip,.row{transition:background-color .25s,border-color .25s,color .25s}
+code{overflow-wrap:anywhere}
+/* dot grid + scanlines + violet glow: terminal texture, all CSS */
+body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+  background-image:radial-gradient(var(--grid) 1px,transparent 1px);background-size:22px 22px}
+body::after{content:"";position:fixed;inset:0;z-index:60;pointer-events:none;opacity:.5;
+  background:repeating-linear-gradient(to bottom,rgba(0,0,0,.035) 0 1px,transparent 1px 3px)}
+html[data-theme="light"] body::after{display:none}
+::selection{background:var(--sel);color:var(--fg)}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+:focus-visible{outline:1px solid var(--accent);outline-offset:2px}
+.skip{position:absolute;left:-9999px}
+.skip:focus{left:8px;top:8px;z-index:99;background:var(--accent);color:var(--ink);padding:6px 12px}
+
+/* ── top chrome: tab bar + breadcrumb (20_header.lua, VS Code grammar) ── */
+.chrome{position:fixed;left:0;right:0;z-index:50;background:var(--panel)}
+#chrome-top{top:0;border-bottom:1px solid var(--border)}
+.tabbar{display:flex;align-items:stretch;height:38px;overflow-x:auto;scrollbar-width:none}
+.tabbar::-webkit-scrollbar{display:none}
+.tabs{display:flex;align-items:stretch}
+.tab{display:flex;align-items:center;gap:8px;padding:0 15px;font-size:12.5px;
+  color:var(--dim);border-right:1px solid var(--border);white-space:nowrap;
+  background:none;border-top:0;border-bottom:0;border-left:0;font-family:inherit;cursor:pointer}
+.tab:hover{color:var(--fg);background:var(--raised);text-decoration:none}
+.tab.active{background:var(--accent);color:var(--ink);font-weight:700}   /* tab_active_bg / fg */
+.tabbar-right{margin-left:auto;display:flex;align-items:center;gap:8px;padding:0 12px}
+.chip{font-family:inherit;font-size:11.5px;color:var(--dim);background:var(--bg);
+  border:1px solid var(--border);border-radius:3px;padding:3px 9px;cursor:pointer}
+.chip:hover{color:var(--fg);border-color:var(--accent)}
+.chip b{color:var(--alert);font-weight:500}
+.crumb{display:flex;align-items:center;height:27px;padding:0 15px;font-size:11.5px;
+  color:var(--dim);background:var(--bg);border-top:1px solid var(--border)}
+.crumb .sep{color:var(--pale);padding:0 7px}
+.crumb .cur{color:var(--fg)}
+.crumb-right{margin-left:auto;color:var(--pale);display:flex;gap:14px}
+@media(max-width:760px){.crumb-right{display:none}}
+
+/* ── frame: explorer │ content │ inspector (sidebars auto-hide at 110ch) ── */
+.frame{position:relative;z-index:1;display:grid;grid-template-columns:240px minmax(0,1fr) 300px;
+  max-width:1600px;margin:0 auto;padding:0 10px}
+.col{position:sticky;top:74px;align-self:start;height:calc(100vh - 116px);overflow-y:auto;
+  padding:16px 10px;font-size:12px;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.col::-webkit-scrollbar{width:8px}
+.col::-webkit-scrollbar-thumb{background:var(--border)}
+.side-title{color:var(--dim);font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+  padding:4px 8px 8px}
+@media(max-width:1280px){.inspector{display:none}.frame{grid-template-columns:240px minmax(0,1fr)}}
+@media(max-width:1024px){.explorer{display:none}.frame{grid-template-columns:minmax(0,1fr)}}
+
+/* explorer tree (▸ / ▾ glyphs, selection = violet tint + accent rail) */
+.tree-root{color:var(--dim);padding:8px 8px 4px}
+.row{display:flex;gap:8px;padding:3px 8px;color:var(--dim);border-radius:2px;cursor:pointer}
+.row:hover{color:var(--fg);background:var(--raised);text-decoration:none}
+.row .g{color:var(--pale);width:10px}
+.row.active{background:var(--sel);color:var(--fg);box-shadow:inset 2px 0 0 var(--accent)}
+.row.active .g{color:var(--accent)}
+.ext-md{color:var(--accent)}.ext-sh{color:var(--alert)}.ext-diff{color:var(--add)}
+.ext-json{color:var(--dim)}.ext-db{color:var(--pale)}
+.row .sub{color:var(--pale);margin-left:auto;padding-left:14px}
+
+/* ── content column ── */
+/* NB: `margin:0 auto` on a grid item kills `stretch` (auto margins win) — the box
+   then shrink-wraps to its min-content (~660px, driven by <pre> lines) and the whole
+   page renders wider than a phone screen. `width:100%` pins it to the grid track. */
+main{min-width:0;width:100%;max-width:900px;margin:0 auto;padding:38px 32px 40px}
+section{scroll-margin-top:82px;padding:52px 0}
+.eyebrow{font-size:11.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--accent);
+  margin:0 0 14px}
+h1{font-size:clamp(34px,5.8vw,58px);line-height:1.05;font-weight:800;margin:0 0 14px;
+  letter-spacing:-.03em}
+h1 .cur{color:var(--accent);animation:blink 1.1s steps(1) infinite}
+h2{font-size:clamp(23px,3vw,32px);margin:0 0 18px;color:var(--accent);
+  font-weight:700;letter-spacing:-.01em;line-height:1.18}   /* headings = accent */
+h3{display:flex;align-items:center;gap:12px;font-size:12.5px;margin:52px 0 18px;
+  color:var(--accent);letter-spacing:.1em;text-transform:uppercase;font-weight:700}
+h3::before{content:"▸";color:var(--pale)}
+h3::after{content:"";flex:1;height:1px;background:var(--border)}
+h4{margin:0 0 8px;font-size:14px;color:var(--fg)}
+p{margin:0 0 18px;max-width:72ch}
+.lede{font-size:16.5px;color:var(--fg);max-width:66ch;line-height:1.7}
+.muted{color:var(--dim)}
+code{font-family:inherit;font-size:.92em;background:var(--panel);border:1px solid var(--border);
+  padding:.05em .35em;border-radius:3px;color:var(--fg)}
+b,strong{color:var(--fg);font-weight:700}
+ul{padding-left:0;list-style:none;margin:0 0 18px}
+li{margin:0 0 13px;padding-left:24px;position:relative;max-width:72ch}
+li::before{content:"▸";position:absolute;left:2px;color:var(--pale)}
+
+/* one-line feature list (opencode-style [*] bullets) */
+.feat{margin:10px 0 0}
+.feat li{margin-bottom:15px;padding-left:28px;font-size:14.5px;color:var(--dim)}
+.feat li::before{content:"[*]";color:var(--accent);font-size:12px;top:1px}
+.feat li b{color:var(--fg)}
+
+/* "primitives, not features" — pi-style honest exclusions */
+.prim{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px 34px;margin-top:12px}
+@media(max-width:820px){.prim{grid-template-columns:minmax(0,1fr)}}
+.prim .it{padding-left:26px;position:relative}
+.prim .it::before{content:"×";position:absolute;left:4px;color:var(--pale);font-weight:700}
+.prim .it b{display:block;color:var(--fg);font-size:14px;margin-bottom:2px}
+.prim .it span{color:var(--dim);font-size:13.5px;line-height:1.6}
+
+/* windows: ╭─ title ─╮ panels (tool cards = INK_PANEL, focus = INK_RAISED + violet) */
+.win{position:relative;border:1px solid var(--border);border-radius:4px;background:var(--panel);
+  padding:26px 24px 20px;margin:0 0 22px;transition:border-color .15s,background .15s}
+.win:hover{border-color:var(--accent);background:var(--raised)}   /* tool_focus_* */
+.win::before{content:attr(data-title);position:absolute;top:-8px;left:14px;padding:0 8px;
+  background:var(--bg);color:var(--accent);font-size:11px;letter-spacing:.08em}
+.win.plain::before{color:var(--dim)}
+.win p:last-child{margin-bottom:0}
+.wingrid{display:grid;gap:16px;margin-bottom:16px}
+.wingrid>*{min-width:0}
+.wingrid .win{margin:0}
+.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+@media(max-width:980px){.g3{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:720px){.g2,.g3{grid-template-columns:minmax(0,1fr)}}
+
+/* kv rows — theme.input_key amber / input_value silver */
+.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 16px;font-size:12.5px}
+.kv .k{color:var(--alert)}
+.kv .v{color:var(--fg);text-align:right}
+.kv .v.ok{color:var(--add)}
+.kv .ct{font-variant-numeric:tabular-nums}
+
+/* which-key hints (50_status.lua right side: key in accent, label in value) */
+.keys{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 14px;font-size:12.5px}
+.keys .k{color:var(--accent);white-space:nowrap}
+.keys .v{color:var(--fg)}
+
+/* code panes + hljs theme mapped to the same palette */
+pre{margin:0;overflow-x:auto;max-width:100%;font-family:inherit;font-size:12.7px;line-height:1.7}
+.win pre{padding-bottom:4px}
+code.hljs{padding:0;background:none;color:var(--fg)}
+.hljs-comment,.hljs-meta{color:var(--dim);font-style:italic}
+.hljs-keyword,.hljs-built_in,.hljs-selector-tag{color:var(--accent)}
+.hljs-string,.hljs-attr,.hljs-template-tag{color:var(--alert)}
+.hljs-number,.hljs-literal,.hljs-bool{color:var(--add)}
+.hljs-title,.hljs-function,.hljs-type,.hljs-class{color:var(--fg)}
+.hljs-variable,.hljs-params{color:var(--fg)}
+.hljs-punctuation,.hljs-operator{color:var(--dim)}
+.c-dim{color:var(--dim)}.c-grn{color:var(--add)}.c-amb{color:var(--alert)}
+.c-vio{color:var(--accent)}.c-red{color:var(--del)}.c-sil{color:var(--fg)}
+
+/* chips / tags */
+.tag{display:inline-block;font-size:10.5px;letter-spacing:.06em;padding:2px 8px;border-radius:2px;
+  background:var(--panel);border:1px solid var(--border);color:var(--dim);margin:0 5px 5px 0}
+.tag.ok{color:var(--add);border-color:color-mix(in srgb,var(--add) 35%,transparent)}
+.tag.warn{color:var(--alert);border-color:color-mix(in srgb,var(--alert) 35%,transparent)}
+.tag.acc{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,transparent)}
+
+/* buttons: solid block = primary (ink on accent), bordered = ghost */
+.btn{display:inline-flex;align-items:center;gap:8px;font-family:inherit;font-size:13px;
+  padding:9px 18px;border-radius:3px;cursor:pointer;transition:.15s;font-weight:700}
+.btn.primary{background:var(--accent);color:var(--ink);border:1px solid var(--accent)}
+.btn.primary:hover{filter:brightness(1.12);text-decoration:none}
+.btn.ghost{background:var(--panel);color:var(--fg);border:1px solid var(--border)}
+.btn.ghost:hover{border-color:var(--accent);text-decoration:none}
+
+/* install bar — the opencode/omp hero pattern, with copy */
+.irow{display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:4px;
+  background:var(--panel);padding:10px 12px;margin:0 0 10px;max-width:100%;overflow:hidden}
+.irow .pr{color:var(--accent)}
+.irow code{background:none;border:none;padding:0;color:var(--fg);font-size:12.8px;
+  white-space:nowrap;overflow-x:auto;flex:1 1 0;min-width:0}
+.irow .chip{flex-shrink:0}
+
+/* hero */
+.hero{padding-top:14px;position:relative}
+/* glow lives INSIDE the hero — an overflowing pseudo-element made phones zoom out */
+.hero::before{content:"";position:absolute;inset:0 0 auto 0;height:420px;z-index:-1;
+  background:radial-gradient(520px 240px at calc(24% + var(--mx,0%)) calc(30% + var(--my,0%)),
+             color-mix(in srgb,var(--accent) 15%,transparent),transparent 70%),
+             radial-gradient(460px 220px at calc(80% - var(--mx,0%)) 0%,
+             color-mix(in srgb,var(--alert) 8%,transparent),transparent 70%)}
+.badges{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0 22px}
+.cta{display:flex;gap:12px;flex-wrap:wrap;margin:0 0 28px}
+.tln{opacity:0;animation:rise .28s ease-out forwards}
+
+/* turn flow */
+.flow{margin:4px 0 16px;padding-left:6px;border-left:1px solid var(--border)}
+.step{position:relative;padding:0 0 18px 26px}
+.step:last-child{padding-bottom:4px}
+.step::before{content:"";position:absolute;left:-4px;top:7px;width:7px;height:7px;
+  background:var(--bg);border:1px solid var(--accent);border-radius:50%}
+.step h4{margin:0 0 4px;font-size:13.5px;color:var(--fg)}
+.step h4 .n{color:var(--accent);font-weight:800;padding-right:8px}
+.step p{margin:0;font-size:13px;color:var(--dim);max-width:70ch}
+
+/* honest limits — diff red, because it removes things */
+.diffgrid{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
+.diffgrid>*{min-width:0}
+.diffcol{border:1px solid var(--border);border-radius:4px;background:var(--panel);overflow:hidden}
+.diffhead{padding:11px 16px;font-size:11.5px;letter-spacing:.12em;text-transform:uppercase;
+  border-bottom:1px solid var(--border);color:var(--ink);font-weight:700}
+.diffhead.del{background:var(--del)}
+.dline{padding:10px 14px 10px 34px;position:relative;font-size:13px;color:var(--dim);
+  border-bottom:1px solid var(--border)}
+.dline:last-child{border-bottom:none}
+.dline .sign{position:absolute;left:13px;font-weight:800}
+.dline.del{background:color-mix(in srgb,var(--del) 5%,transparent)}
+.dline.del .sign{color:var(--del)}
+.dline b{color:var(--fg)}
+
+/* FAQ — native accordion */
+details{border:1px solid var(--border);border-radius:4px;background:var(--panel);margin:0 0 10px}
+details[open]{background:var(--raised)}
+summary{cursor:pointer;padding:12px 16px;font-size:13.5px;color:var(--fg);font-weight:700;
+  list-style:none;position:relative;padding-left:34px}
+summary::-webkit-details-marker{display:none}
+summary::before{content:"▸";position:absolute;left:16px;color:var(--accent);transition:transform .15s}
+details[open] summary::before{transform:rotate(90deg)}
+details p{padding:0 16px 14px 34px;margin:0;font-size:13px;color:var(--dim)}
+
+/* hero run bar: the terminal's own status strip (50_status.lua grammar) */
+.runbar{display:flex;align-items:center;flex-wrap:wrap;gap:2px 4px;margin-top:14px;
+  padding-top:12px;border-top:1px solid var(--border);font-size:12px}
+.runbar .lbl{padding-left:10px}
+.spin{color:var(--accent);font-size:13px;line-height:1}
+#run-ok{color:var(--add);transition:opacity .3s;padding-left:12px}
+.term-run{position:absolute;top:-11px;right:12px}
+.term-run .chip{background:var(--bg)}
+.term-run .chip:hover{color:var(--accent)}
+
+/* mobile FAB — the palette without a keyboard */
+.fab{position:fixed;right:14px;bottom:48px;z-index:70;width:48px;height:48px;border-radius:4px;
+  background:var(--accent);color:var(--ink);border:1px solid var(--accent);font-family:inherit;
+  font-size:19px;font-weight:800;display:none;place-items:center;cursor:pointer;
+  box-shadow:0 10px 24px rgba(0,0,0,.4)}
+.fab:active{transform:scale(.94)}
+
+/* palette input — a real input so phones get their virtual keyboard */
+#pq{flex:1;min-width:0;background:none;border:0;outline:none;color:var(--fg);
+  font:inherit;font-size:13px;caret-color:var(--accent)}
+#pq::placeholder{color:var(--pale)}
+
+footer{padding:10px 0 24px;display:flex;gap:18px;flex-wrap:wrap;align-items:center;
+  color:var(--pale);font-size:12px;border-top:1px solid var(--border);margin-top:12px}
+footer .brand{color:var(--fg);font-weight:800}
+footer .brand i{color:var(--accent);font-style:normal}
+footer .r{margin-left:auto;display:flex;gap:16px}
+
+/* ── bottom chrome: segmented status bar (50_status.lua) ── */
+#chrome-bottom{bottom:0;height:34px;border-top:1px solid var(--border);background:var(--panel);
+  display:flex;align-items:center;font-size:12px;overflow-x:auto;scrollbar-width:none}
+#chrome-bottom::-webkit-scrollbar{display:none}
+.seg{display:flex;align-items:center;white-space:nowrap}
+.blk{padding:2px 8px;font-weight:700;color:var(--ink);background:var(--dim);border-radius:2px;
+  margin:0 6px 0 8px;transition:background .2s}
+.lbl{color:var(--dim);padding-left:12px}
+.val{color:var(--fg);padding-left:6px}
+.money{color:var(--alert)}
+#sb-right{margin-left:auto;display:flex;align-items:center;padding:0 14px}
+#sb-right .k{color:var(--accent)}
+#sb-right .v{color:var(--fg);padding-right:16px}
+
+/* ── command palette: SOLID panel, clearly separated from a scrimmed page ── */
+.palette{position:fixed;inset:0;z-index:80;padding:14vh 12px 0;
+  background:color-mix(in srgb,var(--bg) 82%,transparent);
+  backdrop-filter:blur(14px) saturate(1.15);
+  -webkit-backdrop-filter:blur(14px) saturate(1.15);
+  display:flex;justify-content:center;align-items:flex-start}
+.palette[hidden]{display:none}
+.pbox{width:min(640px,100%);background:var(--panel);border:1px solid var(--accent);
+  border-radius:5px;overflow:hidden;   /* fully opaque — the page must not bleed through */
+  box-shadow:0 30px 80px rgba(0,0,0,.7),
+             0 0 0 4px color-mix(in srgb,var(--accent) 12%,transparent),
+             0 0 44px color-mix(in srgb,var(--accent) 16%,transparent);
+  animation:popin .18s ease-out}
+@keyframes popin{from{opacity:0;transform:translateY(-10px) scale(.985)}to{opacity:1;transform:none}}
+.ptitle{padding:9px 16px;border-bottom:1px solid var(--border);color:var(--accent);
+  background:color-mix(in srgb,var(--raised) 85%,var(--bg));
+  font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+  display:flex;align-items:center;gap:8px}
+.ptitle .r{margin-left:auto;color:var(--pale);letter-spacing:.05em;text-transform:none}
+.pinput{display:flex;align-items:center;gap:9px;padding:13px 16px;
+  border-bottom:1px solid var(--border);background:var(--bg)}
+.pinput .pr{color:var(--accent)}
+.pinput .cur{color:var(--accent);animation:blink 1.1s steps(1) infinite}
+.plist{list-style:none;margin:0;padding:6px 0;max-height:46vh;overflow-y:auto;background:var(--panel)}
+.plist li{margin:0;padding:0}
+.plist button{display:flex;width:100%;gap:12px;align-items:baseline;text-align:left;
+  background:none;border:0;font-family:inherit;font-size:13.5px;color:var(--fg);
+  padding:9px 16px;cursor:pointer}
+.plist button:hover{background:color-mix(in srgb,var(--sel) 70%,transparent)}
+.plist li.sel button{background:var(--sel);box-shadow:inset 3px 0 0 var(--accent)}
+.plist li.sel button::before{content:"▸";margin-left:-10px;color:var(--accent)}
+.plist .g{color:var(--accent);font-weight:700;min-width:16px}
+.plist .h{color:var(--dim);margin-left:auto;font-size:11.5px}
+.phint{padding:9px 16px;border-top:1px solid var(--border);color:var(--dim);font-size:11px;
+  background:color-mix(in srgb,var(--raised) 85%,var(--bg))}
+.phint .k{color:var(--accent)}
+
+/* ── flow diagrams: rails with travelling packets, staged on scroll ─────── */
+.flow3{display:flex;align-items:stretch;gap:0;margin:14px 0 24px}
+.flow3 .fnode{border:1px solid var(--border);border-radius:4px;background:var(--panel);
+  padding:15px 17px;min-width:132px;transition:border-color .2s,background .2s}
+.flow3 .fnode.hot{border-color:var(--accent);background:var(--raised)}
+.fnode .t{color:var(--fg);font-weight:700;font-size:13px;display:block}
+.fnode .s{color:var(--dim);font-size:11.5px;display:block;margin-top:4px;line-height:1.45}
+.fwire{position:relative;flex:1 1 40px;min-width:36px;align-self:center;height:2px;
+  background:var(--border);margin:0 6px}
+.fwire i{position:absolute;top:-3px;left:0;width:9px;height:9px;background:var(--accent);
+  border-radius:2px;box-shadow:0 0 8px color-mix(in srgb,var(--accent) 75%,transparent);
+  animation:pktx 1.7s linear infinite;animation-play-state:paused}
+.fwire i.b{animation-delay:.85s}
+.fgrid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;flex:2}
+.fgrid3>*{min-width:0}
+.fwires{display:flex;flex-direction:column;gap:8px;flex:1 1 90px;align-self:center;margin:0 8px}
+.fwires .fwire{flex:none;align-self:stretch;margin:0;min-width:0}
+   /* NB: base .fwire is align-self:center for the row layout of .flow3 — inside the
+      column .fwires that centers on the HORIZONTAL axis and collapses the rail to 0px,
+      which is why the server⇄plugin animation had nowhere to travel on desktop. */
+.fwire.back i{animation-name:pktback}
+.wlabel{font-size:10.5px;color:var(--dim);letter-spacing:.04em}
+.wlabel .m{color:var(--pale)}
+/* NB: the reveal rule must out-specify the hidden one — `.seq .fgrid3 .fnode`
+   (4 classes) used to beat `.in .fnode` (3), so the audit trio never appeared. */
+.flow3.seq .fnode{opacity:0;transform:translateY(6px);
+  transition:opacity .45s ease,transform .45s ease}
+.flow3.seq.in .fnode{opacity:1;transform:none;transition-delay:calc(var(--i,0)*.13s)}
+.flow3.in .fwire i{animation-play-state:running}
+@keyframes pktx{from{left:-8px}to{left:100%}}
+@keyframes pktback{from{left:100%}to{left:-8px}}
+@keyframes pkty{from{top:-8px}to{top:100%}}
+@keyframes pktbacky{from{top:100%}to{top:-8px}}
+@media(max-width:820px){
+  .flow3{flex-direction:column;align-items:stretch}
+  .fwire{width:3px;height:48px;min-width:0;flex:none;margin:10px auto;border-radius:2px}
+  .fwire i{left:-3.5px;top:0;width:10px;height:10px;animation-name:pkty}
+  .fwire.back i{animation-name:pktbacky}
+  /* two lanes side by side — stacked rails used to overlap into one thin line */
+  .fwires{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 34px;align-items:center;
+    justify-items:center;width:100%;margin:12px 0 6px;min-width:0}
+  .fwires .wlabel{grid-column:1 / -1;text-align:center}
+  .fgrid3{grid-template-columns:minmax(0,1fr)}
+  .wlabel{text-align:center}
+}
+
+.diffgrid.in .dline{animation:rise .35s ease-out backwards;
+  animation-delay:calc(var(--i,0) * 45ms)}
+
+@keyframes blink{50%{opacity:0}}
+@keyframes rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.reveal{opacity:0;transform:translateY(8px);transition:opacity .45s ease,transform .45s ease}
+.reveal.in{opacity:1;transform:none}
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+  .reveal{opacity:1;transform:none}
+  .flow3 .fnode{opacity:1;transform:none}
+  .tln{opacity:1}
+}
+
+/* ── phones & small tablets: no zooming out required ─────────────────────── */
+@media(max-width:720px){
+  body{font-size:14.5px;padding-top:60px;padding-bottom:44px;line-height:1.8}
+  main{padding:20px 15px 34px}
+  section{padding:34px 0}
+  .win{padding:19px 16px 16px;margin-bottom:20px}
+  .win::before{left:11px;font-size:10.5px}
+  pre{font-size:12px;line-height:1.7}
+  h1{font-size:clamp(30px,11vw,44px)}
+  h2{font-size:clamp(21px,6.6vw,27px)}
+  .lede{font-size:15px}
+  h3{margin:36px 0 14px}
+  .badges{gap:9px}
+  .badges .tag{font-size:10.5px;padding:4px 9px}
+  .cta{gap:10px}
+  .btn{flex:1 1 100%;justify-content:center;padding:14px 14px;font-size:13.5px;
+       min-height:48px}   /* thumb-sized tap targets */
+  .irow{flex-wrap:wrap;padding:12px 13px;gap:8px}
+  .irow code{flex:1 1 100%;font-size:11.8px;order:2}
+  .irow .pr{order:1}
+  .irow .chip{order:3;margin-left:auto;min-height:40px;padding:7px 13px}
+  .tab{padding:0 13px;min-height:42px}
+  .step{padding:0 0 20px 22px}
+  .dline{padding:12px 14px 12px 30px;font-size:13px}
+  summary{padding:15px 16px 15px 34px}
+  details p{padding:0 16px 16px 34px}
+  .kv{gap:3px 10px;font-size:12px}
+  .runbar{font-size:11px}
+  #sb-right,.seg .opt{display:none}
+  #chrome-bottom{height:38px}
+  .fab{display:grid}
+  footer{font-size:11.5px;gap:10px}
+}
+@media(max-width:1024px){.fab{display:grid}}
+</style>
+<style>
+/* ── architecture page additions (palette vars only — theme.rs values) ──── */
+.src{display:inline-block;font-family:var(--mono);font-size:10.5px;line-height:1.6;
+  color:var(--pale);background:var(--raised);border-left:2px solid var(--accent);
+  border-radius:0 3px 3px 0;padding:1px 6px;white-space:nowrap}
+.hero h1.long{font-size:clamp(26px,5vw,46px);letter-spacing:-.01em}
+.tblwrap{overflow-x:auto;margin:14px 0 22px;border:1px solid var(--border);border-radius:4px;background:var(--panel)}
+.tbl{width:100%;border-collapse:collapse;font-size:12.5px;line-height:1.6;min-width:580px}
+.tbl th{text-align:left;padding:9px 14px;color:var(--accent);font-size:11px;letter-spacing:.12em;
+  text-transform:uppercase;border-bottom:1px solid var(--border);white-space:nowrap}
+.tbl td{padding:9px 14px;color:var(--fg);vertical-align:top;border-bottom:1px solid var(--border)}
+.tbl tr:last-child td{border-bottom:0}
+.tbl td.d{color:var(--dim)}
+.tbl td code{white-space:nowrap}
+.steps{counter-reset:step;list-style:none;margin:16px 0 24px;padding:0}
+.steps li{position:relative;padding:1px 0 18px 42px}
+.steps li::before{counter-increment:step;content:counter(step);position:absolute;left:0;top:0;
+  width:26px;height:26px;display:grid;place-items:center;border:1px solid var(--accent);
+  color:var(--accent);border-radius:3px;font-size:12.5px;font-weight:700;background:var(--panel)}
+.steps li::after{content:"";position:absolute;left:13px;top:32px;bottom:6px;width:1px;background:var(--border)}
+.steps li:last-child{padding-bottom:0}
+.steps li:last-child::after{display:none}
+.note{border:1px solid var(--border);border-left:3px solid var(--accent);background:var(--panel);
+  border-radius:0 4px 4px 0;padding:15px 19px;margin:20px 0}
+.note.warn{border-left-color:var(--alert)}
+.note.flat{border-left-color:var(--grid)}
+.note h4{margin:0 0 7px;font-size:11.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.note.warn h4{color:var(--alert)}
+.note.flat h4{color:var(--dim)}
+.note p{margin:0 0 8px;font-size:13px;color:var(--fg)}
+.note p:last-child{margin-bottom:0}
+.chiplist{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 22px}
+.chiplist code{margin:0}
+.hint{color:var(--dim);font-size:11.5px;margin:-12px 0 18px}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">skip to content</a>
+
+<!-- ═══ top chrome ═══════════════════════════════════════════════════════ -->
+<header class="chrome" id="chrome-top">
+  <div class="tabbar">
+    <div class="tabs">
+      <a class="tab" href="index.html">kn9t ▸ landing</a>
+      <a class="tab active" href="#top">architecture</a>
+      <a class="tab" href="https://github.com/96Ems/kn9t/blob/main/docs/ARCHITECTURE.md">architecture.md</a>
+      <a class="tab" href="https://github.com/96Ems/kn9t/blob/main/API.md">api.md</a>
+    </div>
+    <div class="tabbar-right">
+      <button class="chip" id="theme-btn" title="toggle theme (L)">◐ light</button>
+      <a class="chip" href="https://github.com/96Ems/kn9t">github <b>↗</b></a>
+    </div>
+  </div>
+  <div class="crumb">
+    <span>~/dev/kn9t</span><span class="sep">▸</span><span>site</span><span class="sep">▸</span>
+    <span class="cur" id="crumb-cur">architecture.html</span>
+    <span class="crumb-right"><span>UTF-8</span><span>LF</span><span>src-checked</span></span>
+  </div>
+</header>
+
+<div class="frame">
+
+  <!-- ═══ explorer (30_sidebar_left.lua) ═════════════════════════════════ -->
+  <aside class="col explorer">
+    <div class="side-title">explorer</div>
+    <div class="tree-root">▾ kn9t/</div>
+    <a class="row" data-sec="events"><span class="g">▸</span><span class="ext-md">events.md</span></a>
+    <a class="row" data-sec="fold"><span class="g">▸</span><span class="ext-md">fold.rs</span></a>
+    <a class="row" data-sec="turn"><span class="g">▸</span><span class="ext-md">turn.rs</span></a>
+    <a class="row" data-sec="runtime"><span class="g">▸</span><span class="ext-md">threads.md</span></a>
+    <a class="row" data-sec="sse"><span class="g">▸</span><span class="ext-md">sse.rs</span></a>
+    <a class="row" data-sec="plugins"><span class="g">▸</span><span class="ext-md">plugin.rs</span></a>
+    <a class="row" data-sec="reload"><span class="g">▸</span><span class="ext-diff">reload.md</span></a>
+    <a class="row" data-sec="tui"><span class="g">▸</span><span class="ext-md">tui.lua</span></a>
+    <a class="row" data-sec="schema"><span class="g">▸</span><span class="ext-json">schema.json</span></a>
+    <a class="row" data-sec="drift"><span class="g">▸</span><span class="ext-diff">drift.diff</span></a>
+    <div class="tree-root">▾ docs/</div>
+    <a class="row" href="index.html"><span class="g">▸</span>index.html<span class="sub">landing</span></a>
+    <a class="row" href="https://github.com/96Ems/kn9t/blob/main/docs/ARCHITECTURE.md"><span class="g">▸</span>ARCHITECTURE.md</a>
+    <a class="row" href="https://github.com/96Ems/kn9t/blob/main/DESIGN.md"><span class="g">▸</span>DESIGN.md<span class="sub">why</span></a>
+    <a class="row" href="https://github.com/96Ems/kn9t/blob/main/API.md"><span class="g">▸</span>API.md</a>
+    <a class="row" href="https://github.com/96Ems/kn9t/blob/main/docs/CONFIG.md"><span class="g">▸</span>CONFIG.md</a>
+    <a class="row" href="https://github.com/96Ems/kn9t/blob/main/docs/PLUGIN_DEVELOPMENT.md"><span class="g">▸</span>PLUGIN_DEVELOPMENT.md</a>
+  </aside>
+
+  <!-- ═══ content ════════════════════════════════════════════════════════ -->
+  <main id="main">
+
+    <!-- ── hero ── -->
+    <section class="hero" id="top">
+      <p class="eyebrow">source-read · file:line verified · cross-checked with docs</p>
+      <h1 class="long">how kn9t works<span class="cur">▌</span></h1>
+      <p class="lede">
+        A tour of the internals — read from the source, then checked against the
+        docs. Every claim cites a file and a line, so you can open the repo and
+        follow along. The one idea everything else follows from: <b>state lives
+        in an append-only event log, never in process memory</b> — which is
+        exactly why the UI, the plugins and the config can all hot reload while
+        a session is running.
+      </p>
+
+      <div class="badges">
+        <span class="tag acc">15 workspace members</span>
+        <span class="tag">26 event kinds · 7 durable</span>
+        <span class="tag">37 routes</span>
+        <span class="tag">20 host-API ops</span>
+        <span class="tag">8 hooks + on_event</span>
+        <span class="tag">0 tokio</span>
+      </div>
+
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/96Ems/kn9t">Read the source ↗</a>
+        <a class="btn ghost" href="#reload">Straight to hot reload</a>
+        <a class="btn ghost" href="index.html">← back to landing</a>
+      </div>
+
+      <div class="note flat">
+        <h4>how to read this page</h4>
+        <p style="margin:0">
+          Grey rail chips like <span class="src">state.rs:553</span> are exact
+          source locations (file under <code>crates/</code> or <code>plugins/</code>
+          unless stated). Verbatim code and comments are quoted, not paraphrased.
+          Where the docs disagree with the code, <a href="#drift">§10</a> says so.
+        </p>
+      </div>
+    </section>
+
+    <!-- ── 01 events ── -->
+    <section id="events">
+      <p class="eyebrow">01 — the one rule</p>
+      <h2>The log is the truth</h2>
+      <p>
+        Every durable fact of a session is one <code>Event</code> appended to a
+        SQLite table. The SSE wire, the database, and what you see on screen are
+        the same stream. The module doc says it in two lines:
+      </p>
+      <div class="win plain" data-title="crates/kn9t-core/src/event.rs:1-2">
+<pre><code class="language-rust">//! Events are the durable log: session state is reconstructed by folding events in seq order.
+//! Each variant is marked as durable (carries `seq`) or transient (live only).</code></pre>
+      </div>
+      <p>
+        One enum, two tiers. The wire format is internally tagged,
+        snake_case <span class="src">event.rs:115-118</span>:
+        <code>#[serde(tag = "kind", rename_all = "snake_case")]</code>.
+        <b>7 durable</b> variants carry <code>seq</code> and fold in order;
+        <b>19 transient</b> variants are live-only and never persisted — the
+        store rejects them outright: <code>"append: transient event rejected"</code>
+        <span class="src">session.rs:20-22</span>.
+      </p>
+
+      <div class="tblwrap"><table class="tbl">
+        <tr><th>durable (7)</th><th>what it records</th></tr>
+        <tr><td><code>session_forked</code></td><td class="d">a session split off with a snapshot — <code>seq 0</code> of the child <span class="src">event.rs:121</span></td></tr>
+        <tr><td><code>message_appended</code></td><td class="d">a user / assistant / tool message joins the transcript <span class="src">event.rs:125</span></td></tr>
+        <tr><td><code>model_changed</code></td><td class="d">the session pinned a different model <span class="src">event.rs:129</span></td></tr>
+        <tr><td><code>compacted</code></td><td class="d">a seq range was replaced by a summary message <span class="src">event.rs:133</span></td></tr>
+        <tr><td><code>handoff</code></td><td class="d">calls kept / summarized / dropped, plus resume actions <span class="src">event.rs:140</span></td></tr>
+        <tr><td><code>tools_toggled</code></td><td class="d">the <b>full</b> disabled-tool list — “so replays are idempotent” <span class="src">event.rs:148-149</span></td></tr>
+        <tr><td><code>usage_recorded</code></td><td class="d">tokens, price snapshot, cost — with an <code>estimated</code> flag <span class="src">event.rs:154</span></td></tr>
+      </table></div>
+
+      <p class="hint">transient (19) — streamed live over SSE, dropped on the floor by the store:</p>
+      <div class="chiplist">
+        <code>turn_started</code><code>text_delta</code><code>thinking_delta</code><code>tool_args_delta</code>
+        <code>tool_started</code><code>tool_progress</code><code>tool_finished</code><code>approval_request</code>
+        <code>turn_ended</code><code>hook_failed</code><code>title_changed</code><code>error</code>
+        <code>retry_attempt</code><code>turn_status</code><code>plugin_notification</code><code>interaction_request</code>
+        <code>ui_directive</code><code>plugin_declared</code><code>plugin_state</code>
+      </div>
+
+      <h3>the table</h3>
+      <div class="win plain" data-title="crates/kn9t-store/src/db.rs:482-489">
+<pre><code class="language-sql">CREATE TABLE IF NOT EXISTS events (
+  session_id TEXT    NOT NULL REFERENCES sessions(id),
+  seq        INTEGER NOT NULL,
+  ts         INTEGER NOT NULL,
+  kind       TEXT    NOT NULL,
+  payload    TEXT    NOT NULL,
+  PRIMARY KEY (session_id, seq)
+);</code></pre>
+      </div>
+      <p>
+        Append-only in practice: the only statements that touch
+        <code>events</code> are <code>INSERT</code> and <code>SELECT</code>
+        (the single exception is whole-session deletion
+        <span class="src">session_delete.rs:59-74</span>). Projections
+        (<code>messages</code>, <code>usage</code>) are derived tables that can
+        always be rebuilt from this one.
+      </p>
+
+      <h3>one append = one transaction, then — and only then — a broadcast</h3>
+      <ol class="steps">
+        <li><b><code>BEGIN IMMEDIATE</code></b>, then <code>seq = head_seq + 1</code> for the session —
+          gapless by construction. “The store owns seq assignment: stamp it before
+          serializing and projecting” <span class="src">session.rs:33-47</span></li>
+        <li><b><code>INSERT INTO events</code></b>, project rows, blob refcounts,
+          <code>UPDATE sessions SET head_seq</code>, <code>COMMIT</code>
+          <span class="src">session.rs:51-85</span></li>
+        <li><b>Then</b> the after-append observer fires <i>outside</i> the connection lock:
+          “the callback must never block or deadlock other store users”
+          <span class="src">session.rs:87-94</span>. That observer is the single
+          publisher to the SSE bus: “durable events reach the bus only through this
+          observer … one publisher, no duplicates” <span class="src">state.rs:221-226</span></li>
+      </ol>
+      <p class="hint">persist first, broadcast second — a subscriber can never see an event the log doesn't have.</p>
+
+      <div class="flow3" data-diagram>
+        <div class="fnode hot"><span class="t">store::append</span><span class="s">BEGIN IMMEDIATE<br>seq = head_seq + 1</span></div>
+        <div class="fwire"><i></i><i class="b"></i></div>
+        <div class="fnode hot"><span class="t">events</span><span class="s">INSERT + project<br>COMMIT</span></div>
+        <div class="fwire back"><i></i></div>
+        <div class="fnode hot"><span class="t">after_append</span><span class="s">bus → SSE echo<br>outside the lock</span></div>
+      </div>
+    </section>
+
+    <!-- ── 02 fold ── -->
+    <section id="fold">
+      <p class="eyebrow">02 — state reconstruction</p>
+      <h2>State = fold(events)</h2>
+      <p>
+        Nothing keeps authoritative session state in memory. Reads are derived —
+        incrementally projected on write, and rebuilt from scratch by replay
+        whenever something needs to start clean. The code's own words are
+        <i>fold</i> and <i>replay</i>.
+      </p>
+      <ul>
+        <li><b>Projector</b> — <code>kn9t_store::project::project</code> maps one durable
+          event to rows (<code>Message</code>, <code>Usage</code>, <code>Compacted</code>)
+          <span class="src">project.rs:96-173</span>. <code>session_forked</code>,
+          <code>model_changed</code>, <code>handoff</code>, <code>tools_toggled</code>
+          project nothing.</li>
+        <li><b>Replay</b> — <code>replay_events</code> runs
+          <code>SELECT session_id, ts, payload FROM events ORDER BY session_id, seq</code>
+          and folds every payload through a closure
+          <span class="src">reproject.rs:156-193</span>. Unknown kinds are skipped with a
+          warning — old readers stay compatible with a newer log.</li>
+        <li><b>Last-wins</b> — model and disabled tools are reconstructed by taking the
+          newest relevant event: <code>last ModelChanged &gt; model_at_fork &gt;
+          SessionForked.fork.model_at_fork</code>
+          <span class="src">session.rs:170-211</span>, and
+          <code>tools_toggled</code> always carries the full list so a replay is
+          idempotent <span class="src">session.rs:149-168</span>.</li>
+        <li><b>Honest log, usable read</b> — when the model needs its context,
+          <code>plan_request</code> folds the projection and repairs it <i>in memory only</i>:
+          unparseable tool args are mended and orphaned tool calls are closed with a
+          synthesized result — “the log stays honest, the read is made usable”
+          <span class="src">plan.rs:95-100, 234-289</span>.</li>
+      </ul>
+
+      <div class="note">
+        <h4>why this is the hot-reload enabler</h4>
+        <p style="margin:0">
+          Because state is a fold over an append-only log and not a pile of process
+          memory, any piece of the system can be torn down and rebuilt from a cursor:
+          the TUI re-attaches at <code>last_seq</code>, a plugin re-declares its tools,
+          the config swaps its providers. There is nothing to migrate and nothing to
+          rehydrate — the log <i>is</i> the state. Reload can't corrupt what reload
+          doesn't own. <a href="#reload">§07</a> shows the three reload surfaces in detail.
+        </p>
+      </div>
+    </section>
+
+    <!-- ── 03 turn ── -->
+    <section id="turn">
+      <p class="eyebrow">03 — one turn, end to end</p>
+      <h2>One prompt, end to end</h2>
+      <div class="flow3" data-diagram>
+        <div class="fnode hot"><span class="t">POST /prompt</span><span class="s">append first<br>{accepted, seq}</span></div>
+        <div class="fwire"><i></i><i class="b"></i></div>
+        <div class="fnode hot"><span class="t">turn thread</span><span class="s">ReactLoop<br>plan_request</span></div>
+        <div class="fwire back"><i></i></div>
+        <div class="fnode hot"><span class="t">provider</span><span class="s">stream_with_sink<br>text/tool deltas</span></div>
+        <div class="fwire"><i></i><i class="b"></i></div>
+        <div class="fnode hot"><span class="t">tool batch</span><span class="s">authorize → execute<br>result appended</span></div>
+      </div>
+      <ol class="steps">
+        <li><b>Persist the prompt first.</b> <code>routes::session::prompt</code> appends
+          <code>MessageAppended</code> <i>before</i> anything runs
+          <span class="src">routes/session.rs:303-318</span>, answers
+          <code>{"accepted":true,"seq":n}</code> and hands off.</li>
+        <li><b>An OS thread, not a task.</b> <code>turn::spawn_turn</code> spawns a thread and
+          registers a <code>TurnSlot</code> carrying the <code>Cancel</code> token
+          <span class="src">turn.rs:664-738</span>.</li>
+        <li><b>Compose the loop.</b> <code>compose_loop</code> wires the store + buses as the
+          <code>EventSink</code>, all plugin hosts as hooks
+          (<code>ComposedHookHost</code>), and the live <code>ToolRegistry</code> as the
+          <code>ToolSource</code> — “a live handle, re-read on every model call, so a
+          plugin stop/start/reload mid-turn is observed now” <span class="src">turn.rs:418-488</span></li>
+        <li><b>Plan the request.</b> <code>one_attempt</code> folds the messages
+          (<code>plan_request</code>), compacts when over <code>COMPACT_THRESHOLD = 0.80</code>
+          <span class="src">plan.rs:15</span>, runs the <code>before_request</code> hook
+          <span class="src">exec.rs:154</span>, and collects visible tool specs
+          <span class="src">exec.rs:162</span>.</li>
+        <li><b>Stream into the sink.</b> <code>provider.stream_with_sink(req, cancel, sink)</code>
+          <span class="src">exec.rs:229-231</span>; <code>assemble</code> turns chunks into
+          transient <code>text_delta</code> / <code>thinking_delta</code> /
+          <code>tool_args_delta</code> <span class="src">assemble.rs:27-159</span>.</li>
+        <li><b>Close the message durably.</b> the assembled assistant message is appended
+          with <code>MessageAppended</code>, then priced with <code>UsageRecorded</code>
+          <span class="src">turn.rs:175-187</span>.</li>
+        <li><b>Run the tool batch.</b> <code>authorize</code> first: disabled tools, then
+          stopped plugins, then arg parsing, then the <code>before_tool_call</code> veto;
+          <code>Ask</code> blocks the thread on the <code>Approver</code> until
+          <code>POST /approve</code> <span class="src">exec.rs:596-699</span>.
+          Parallel-safe tools get their own threads; every plugin tool round-trips over
+          stdio as hook <code>"tool_call"</code> with <code>Chunk</code> progress
+          <span class="src">remote_tool.rs:50-131</span>.</li>
+        <li><b>Feed the results back.</b> results are appended as
+          <code>role: tool</code> messages <span class="src">turn.rs:213-220</span>, and the
+          loop continues until a turn ends with no tool calls —
+          <code>TurnEnded</code> always follows <code>TurnFinishing</code>, in that order
+          <span class="src">kn9t-react/src/turn.rs:90-93</span>.</li>
+      </ol>
+    </section>
+
+    <!-- ── 04 runtime ── -->
+    <section id="runtime">
+      <p class="eyebrow">04 — the runtime</p>
+      <h2>Threads, not futures</h2>
+      <div class="win plain" data-title="crates/kn9t-server/src/lib.rs:5">
+<pre><code class="language-rust">//! Blocking, thread-per-connection over `tiny_http`; no tokio, no async (GI-5, R-SRV-015).</code></pre>
+      </div>
+      <p>
+        There is no <code>tokio</code>, no <code>async fn</code>, no
+        <code>.await</code> anywhere in the workspace — enforced by simply not
+        depending on an async runtime. Every table row below is an OS thread with
+        a name and a job.
+      </p>
+      <div class="tblwrap"><table class="tbl">
+        <tr><th>thread</th><th>job</th><th>source</th></tr>
+        <tr><td><code>accept loop</code></td><td class="d"><code>recv_timeout(200ms)</code>, dispatch each request on its own thread</td><td class="d"><span class="src">lib.rs:148-162</span></td></tr>
+        <tr><td><code>per-connection</code></td><td class="d">one <code>router::handle</code> per TCP connection (SSE streams live here)</td><td class="d"><span class="src">lib.rs:160-162</span></td></tr>
+        <tr><td><code>idle-exit watchdog</code></td><td class="d">exit when no client is attached and no turn runs (default 5s)</td><td class="d"><span class="src">lib.rs:84-94</span></td></tr>
+        <tr><td><code>kn9t-config-watch</code></td><td class="d">mtime poll of <code>config.toml</code> every 2s + debounce</td><td class="d"><span class="src">watch.rs:98-128</span></td></tr>
+        <tr><td><code>plugin loader</code></td><td class="d">spawn + hello-handshake every plugin before ready</td><td class="d"><span class="src">main.rs:171-219</span></td></tr>
+        <tr><td><code>per-turn</code></td><td class="d">the ReAct loop for one prompt (<code>compose_loop → run</code>)</td><td class="d"><span class="src">turn.rs:688-738</span></td></tr>
+        <tr><td><code>parallel tool workers</code></td><td class="d">one per <code>parallel_safe</code> tool call in a batch</td><td class="d"><span class="src">exec.rs:427-476</span></td></tr>
+        <tr><td><code>subagent watchdogs</code></td><td class="d">timeout + ESC propagation to child turns</td><td class="d"><span class="src">turn.rs:546-573</span></td></tr>
+      </table></div>
+
+      <h3>and the paranoia is structural</h3>
+      <ul>
+        <li><b>auth</b> — every request carries <code>Authorization: Bearer</code> against a
+          random token written to <code>~/.kn9t/token</code> (mode 0600): “the security
+          property is <i>possession of the file</i>” <span class="src">auth.rs:36-59</span></li>
+        <li><b>no browser</b> — any request with an <code>Origin</code> header is rejected 403:
+          “A browser <code>fetch</code> attaches an <code>Origin</code> header; a native client
+          does not.” <span class="src">router.rs:49-58</span></li>
+        <li><b>one writer</b> — mutating routes need the session's write-lease
+          (<code>X-Lease</code>), stealable with <code>?takeover=1</code>, idle 5 min
+          <span class="src">lease.rs:19-110</span></li>
+        <li><b>localhost only</b> — the listener is <code>127.0.0.1:0</code>
+          <span class="src">lib.rs:71-74</span></li>
+      </ul>
+    </section>
+
+    <!-- ── 05 sse ── -->
+    <section id="sse">
+      <p class="eyebrow">05 — live streaming</p>
+      <h2>SSE: no gap, no duplicate</h2>
+      <p>
+        A client can attach at any point — cold boot, reconnect after a dropped
+        Wi-Fi, a second terminal — and must see the transcript exactly once, in
+        order. <code>GET /session/{id}/events?from={seq}</code> guarantees it with an
+        attach protocol whose ordering “is exact and is the whole point of this
+        module” <span class="src">sse.rs:3-16</span>:
+      </p>
+      <div class="flow3" data-diagram>
+        <div class="fnode hot"><span class="t">1 · subscribe</span><span class="s">first — buffer the bus</span></div>
+        <div class="fwire"><i></i><i class="b"></i></div>
+        <div class="fnode hot"><span class="t">2 · replay</span><span class="s">durable seq &gt; from<br>up to head_seq</span></div>
+        <div class="fwire back"><i></i></div>
+        <div class="fnode hot"><span class="t">3 · live_partial</span><span class="s">the in-flight text</span></div>
+        <div class="fwire"><i></i><i class="b"></i></div>
+        <div class="fnode hot"><span class="t">4 · dedup flush</span><span class="s">drop seq ≤ head_seq<br>then go live</span></div>
+      </div>
+      <ol class="steps">
+        <li><b>Subscribe first</b>, buffering everything from now on. “Read-then-subscribe
+          is forbidden: a durable event committed in the gap between the read and the
+          subscribe would be lost” <span class="src">sse.rs:7-14</span></li>
+        <li><b>Replay</b> durable rows past the client's cursor, read through one atomic
+          store snapshot “so a concurrent <code>append</code> cannot commit between the two
+          reads” <span class="src">sse.rs:162-174 · db.rs:214-258</span></li>
+        <li><b>Emit the in-flight partial</b> from <code>live_messages</code> — best-effort;
+          the authoritative <code>MessageAppended</code> supersedes it
+          <span class="src">sse.rs:71-76, 122-125</span></li>
+        <li><b>Flush the buffer</b>, discarding any event with
+          <code>seq ≤ head_seq</code> — exact dedup, because durable seqs are gapless
+          <span class="src">sse.rs:127-152</span></li>
+      </ol>
+
+      <div class="note warn">
+        <h4>the watermark, and the one case it can't cover</h4>
+        <p>
+          <code>head_seq</code> is the dedup watermark: everything at or below it already
+          went out in step 2. But the subscriber ring is bounded and drops the
+          <i>oldest</i> frames on overflow — and durable echoes ride it too. A lost
+          durable event would be “a permanent hole in the client's transcript unless it
+          refetches”, so the prelude tracks <code>contiguous_through</code> and emits an
+          explicit <code>event: gap</code> frame telling the client to re-snapshot
+          <span class="src">sse.rs:86-106 · router.rs:323-335</span>.
+        </p>
+        <p style="margin:0">
+          Reconnects are then trivial: keep a seq cursor, re-attach with
+          <code>?from=last_seq</code>. The TUI's reducer is a pure
+          <code>(State, SseFrame) → State</code> that tracks <code>last_seq</code> so a
+          reconnect never re-renders old events
+          <span class="src">kn9t-tui/src/reducer.rs:1-7, 55</span>.
+        </p>
+      </div>
+    </section>
+
+    <!-- ── 06 plugins ── -->
+    <section id="plugins">
+      <p class="eyebrow">06 — the extension model</p>
+      <h2>Plugins are processes</h2>
+      <p>
+        A plugin is any executable speaking newline-delimited JSON over
+        stdin/stdout — “every message is exactly one JSON object on one
+        <code>\n</code>-terminated line” <span class="src">kn9t-plugin/src/codec.rs:1-6</span>.
+        Rust, Go, Python, TypeScript: the wire doesn't care. Even the built-in
+        tools are a plugin — “Tools are loaded from the kn9t-tools plugin
+        subprocess, not from an in-process crate — this validates the full plugin
+        code path” <span class="src">kn9t-server/Cargo.toml:11-12</span>.
+      </p>
+
+      <div class="flow3 duo" data-diagram>
+        <div class="fnode hot" style="flex:0 0 auto"><span class="t">kn9t-server</span><span class="s">the host</span></div>
+        <div class="fwires">
+          <div class="wlabel">host ▸ plugin · hello · hook · event · cancel · shutdown · kv_result · api_result</div>
+          <div class="fwire"><i></i><i class="b"></i></div>
+          <div class="fwire back"><i></i></div>
+          <div class="wlabel">plugin ▸ host · hello · result · chunk · done · event · kv_get/set/del · request · declare</div>
+        </div>
+        <div class="fnode hot" style="flex:0 0 auto"><span class="t">plugin process</span><span class="s">rust · go · python · ts</span></div>
+      </div>
+
+      <p>
+        The handshake is one round: the host sends
+        <code>Hello { proto: 1, kn9t: &lt;version&gt; }</code>, the plugin answers
+        <code>Hello { name, capabilities, hooks, tools, events, provider }</code> —
+        anything else is <code>"expected hello from plugin"</code>
+        <span class="src">tools.rs:277-315</span>. After that, tool calls are
+        streaming <code>"tool_call"</code> round-trips (300s deadline, cancellable),
+        provider calls <code>"provider_complete"</code>
+        <span class="src">remote_tool.rs:82-96 · remote_provider.rs:48-52</span>.
+      </p>
+
+      <h3>20 host-API ops <span class="src">host_api.rs:800-825</span></h3>
+      <div class="chiplist">
+        <code>session_create</code><code>session_read</code><code>session_fork</code><code>session_prompt</code>
+        <code>tool_list</code><code>tool_execute</code><code>tool_visibility</code>
+        <code>provider_complete</code>
+        <code>plugin_list</code><code>plugin_start</code><code>plugin_stop</code><code>plugin_reload</code><code>plugin_load</code><code>plugin_health</code>
+        <code>interaction_request</code>
+        <code>ui_directive</code><code>ui_register_lua</code><code>ui_set_state</code><code>ui_clear</code>
+      </div>
+      <p class="hint">
+        plugins call these as <code>{"t":"request","id":…,"op":…}</code> and get an
+        <code>api_result</code> back. They are “thin wrappers over the same
+        <code>ServerState</code> methods the HTTP routes call, so the human and agent paths
+        cannot drift” <span class="src">host_api.rs:262-263</span>.
+      </p>
+
+      <h3>8 hooks + <code>on_event</code> <span class="src">event.rs:31-39</span></h3>
+      <div class="tblwrap"><table class="tbl">
+        <tr><th>hook</th><th>fires</th><th>composition</th></tr>
+        <tr><td><code>before_tool_call</code></td><td class="d">before every tool execution</td><td class="d">veto, strictest wins — <code>Allow|Ask|Deny|Replace</code> (ADR-0008)</td></tr>
+        <tr><td><code>after_tool_call</code></td><td class="d">when a tool returns</td><td class="d">pipeline (may replace content)</td></tr>
+        <tr><td><code>before_request</code></td><td class="d">before each provider stream</td><td class="d">pipeline (may rewrite messages)</td></tr>
+        <tr><td><code>should_stop_after_turn</code></td><td class="d">after a no-tool-call turn</td><td class="d">any says stop</td></tr>
+        <tr><td><code>prepare_next_turn</code></td><td class="d">after each tool batch</td><td class="d">pipeline (may patch model/thinking)</td></tr>
+        <tr><td><code>get_steering</code></td><td class="d">during reminders + after batches</td><td class="d">concatenated</td></tr>
+        <tr><td><code>get_followup</code></td><td class="d">before the idle decision</td><td class="d">concatenated</td></tr>
+        <tr><td><code>get_api_key</code></td><td class="d">on provider auth</td><td class="d">first non-null</td></tr>
+      </table></div>
+      <p class="hint">
+        per-hook deadlines 0.5s–30s <span class="src">host.rs:46-58</span>; every failure
+        surfaces as a <code>hook_failed</code> event, never silently
+        <span class="src">host.rs:872-883</span>.
+      </p>
+
+      <div class="note">
+        <h4>policy is a plugin too</h4>
+        <p style="margin:0">
+          “This module used to decide risk … ADR-0008 moved that judgement to a
+          user-installed policy plugin, which answers <code>before_tool_call</code> with
+          <code>HookVeto::Allow|Ask|Deny|Replace</code>. Nothing here judges a tool call any
+          more.” <span class="src">policy.rs:1-17</span> — install
+          <code>kn9t-policy</code> from
+          <a href="https://github.com/96Ems/kn9t-plugins">96Ems/kn9t-plugins ↗</a>.
+        </p>
+      </div>
+    </section>
+
+    <!-- ── 07 hot reload ── -->
+    <section id="reload">
+      <p class="eyebrow">07 — hot reload</p>
+      <h2>Hot reload, without the asterisks</h2>
+      <p>
+        Three surfaces reload while kn9t is running. None of them can corrupt
+        state, because none of them own it (§02): the log is the truth, and
+        reloadable things are pure derivation — a Lua sandbox, a tool registry, a
+        provider map.
+      </p>
+
+      <div class="tblwrap"><table class="tbl">
+        <tr><th>surface</th><th>trigger</th><th>code path</th><th>automatic</th></tr>
+        <tr>
+          <td><b>the UI</b><br><span class="src" style="margin-top:4px">~/.kn9t/tui/*.lua</span></td>
+          <td class="d">file save (<code>notify</code> watcher, 100ms debounce)</td>
+          <td class="d"><code>runtime.reload()</code> <span class="src">mod.rs:425</span></td>
+          <td class="d">yes</td>
+        </tr>
+        <tr>
+          <td><b>a plugin</b><br><span class="src" style="margin-top:4px">process</span></td>
+          <td class="d"><code>POST /plugin/{n}/reload</code> · host op <code>plugin_reload</code> · runtime <code>declare</code></td>
+          <td class="d"><code>state.reload_plugin()</code> <span class="src">state.rs:556</span></td>
+          <td class="d">explicit</td>
+        </tr>
+        <tr>
+          <td><b>the config</b><br><span class="src" style="margin-top:4px">~/.kn9t/config.toml</span></td>
+          <td class="d">mtime poll every 2s (debounced) · <code>POST /config/reload</code></td>
+          <td class="d"><code>state.reload_config()</code> <span class="src">state.rs:847</span></td>
+          <td class="d">yes</td>
+        </tr>
+      </table></div>
+
+      <h3>the UI — save the file, watch the screen</h3>
+      <ol class="steps">
+        <li><b>Save anything in <code>~/.kn9t/tui/</code></b> (or <code>~/.kn9t/tui.lua</code>).
+          An <code>notify</code> watcher — per-file and per-directory, covering
+          modify / create / <i>remove</i> — fires after a 100ms debounce
+          <span class="src">kn9t-tui/src/lua/watcher.rs:71-97, 165-179</span>.</li>
+        <li><b>The sandbox is reset</b>: <code>runtime.reload()</code> re-applies the sandbox
+          (<code>io</code>, <code>loadfile</code>, <code>dofile</code> are <code>nil</code>;
+          <code>load</code> rejects bytecode <span class="src">sandbox.rs:27-160</span>),
+          reinstalls the lazy accessors, and republishes the theme — “republishing picks
+          up a theme change without a restart” <span class="src">mod.rs:425-446</span>.</li>
+        <li><b>Built-in first, yours second.</b> <code>reload_all()</code> re-runs the embedded
+          default UI, then your files: “Re-running the built-in means deleting a function
+          from your config restores the default behaviour instead of leaving the previous
+          definition stale in the Lua state” <span class="src">mod.rs:402-417</span>.</li>
+        <li><b>Caches and bindings are rebuilt</b> — the render cache is force-invalidated
+          <span class="src">mod.rs:270-277</span>, plugin panels are cleared
+          <span class="src">panels.rs:274-275</span>, and keymaps / clicks / commands are
+          re-drained “so <code>kn9t.map</code> picks up on hot-reload”
+          <span class="src">app.rs:712-741</span>.</li>
+        <li><b>A <code>Tick</code> wakes the loop</b>, the next frame renders the new tree —
+          against the <i>same</i> Rust state (transcript, session, scroll: untouched).
+          And a Lua error never kills anything: “A Lua error (syntax or runtime) never
+          crashes the TUI … Hot-reload continues watching for fixes”
+          <span class="src">mod.rs:24-27</span> — you get the error shell naming the
+          failing chunk, and saving again fixes it.</li>
+      </ol>
+      <p class="hint">
+        what survives: the Rust <code>App</code> state and the lazy message store — “the
+        sandbox is rebuilt, the store is not” <span class="src">mod.rs:78-82</span>.
+      </p>
+
+      <h3>a plugin — the reload contract</h3>
+      <div class="win plain" data-title="crates/kn9t-server/src/state.rs:553-555">
+<pre><code class="language-rust">/// Hot-reload a plugin by declared name (R-PLUG2-100): cancel in-flight calls, wait for
+/// `done`, `shutdown`, respawn from the same `cmd`, then re-handshake and re-register.
+/// Calls that miss the shutdown get a synthetic error at the call site.</code></pre>
+      </div>
+      <div class="flow3" data-diagram>
+        <div class="fnode hot"><span class="t">1 · cancel</span><span class="s">every in-flight call</span></div>
+        <div class="fwire"><i></i><i class="b"></i></div>
+        <div class="fnode hot"><span class="t">2 · drain</span><span class="s">≤ 30s, poll 20ms</span></div>
+        <div class="fwire back"><i></i></div>
+        <div class="fnode hot"><span class="t">3 · shutdown</span><span class="s">close the pipe</span></div>
+        <div class="fwire"><i></i><i class="b"></i></div>
+        <div class="fnode hot"><span class="t">4 · respawn</span><span class="s">same cmd · re-hello<br>registry rebuilt</span></div>
+      </div>
+      <ol class="steps">
+        <li><b>Cancel</b> every in-flight call <span class="src">state.rs:578-581</span> —
+          plugins that declared <code>cancelable</code> see a <code>Cancel {id}</code>.</li>
+        <li><b>Drain</b> up to the <code>before_tool_call</code> timeout (30s), polling every
+          20ms; leftover calls are abandoned with a log line
+          <span class="src">state.rs:583-594</span>.</li>
+        <li><b>Shutdown</b> the old process and close the write pipe
+          <span class="src">state.rs:596-599</span>.</li>
+        <li><b>Respawn from the same <code>cmd</code></b>, full hello-handshake, and wire the new
+          host “the same path as a freshly loaded one — they cannot drift”
+          <span class="src">state.rs:601-618</span>.</li>
+        <li><b>Rebuild the whole <code>ToolRegistry</code></b> from all hosts (dedup, first
+          wins), clear the stopped + crash flags — “A fresh process means a <i>future</i>
+          crash is a new fact” — then announce <code>plugin_state: reloaded</code>
+          <span class="src">state.rs:621-678</span>.</li>
+      </ol>
+      <p>
+        What callers see: a call that missed the shutdown gets a synthetic
+        <code>plugin '…' disconnected</code> error at the call site
+        <span class="src">host.rs:811-816</span>, and cancelled calls return error tool
+        results the model can retry — the log stays honest (DESIGN.md:2071). What
+        survives: the plugin's <b>KV store</b>, because it's SQLite-backed per plugin
+        namespace <span class="src">host.rs:96-101 · db.rs:566-573</span>. What doesn't:
+        process memory, by design.
+      </p>
+      <div class="irow">
+        <span class="pr">›</span>
+        <code id="cmd-reload">curl -X POST "http://localhost:$PORT/plugin/my-plugin/reload" -H "Authorization: Bearer $TOKEN"</code>
+        <button class="chip" id="copy-reload" data-copy="cmd-reload">⧉ copy</button>
+      </div>
+      <p class="hint">
+        same contract via host ops (<code>plugin_reload</code>, <code>plugin_start</code>,
+        <code>plugin_stop</code>) — an agent can repair its own tools
+        <span class="src">host_api.rs:262-280</span>. And <b>zero-restart
+        re-declaration</b>: send <code>{"t":"declare", …}</code> to swap your tools, hooks and
+        capabilities live — “plugin updates its tools/hooks/capabilities at runtime”
+        <span class="src">codec.rs:124-136 · state.rs:1103-1152</span>.
+      </p>
+
+      <h3>the config — debounced by design</h3>
+      <p>
+        The watcher is an mtime poll every 2s with a settle rule: a change reloads
+        only once the timestamp has been stable for a full interval — “an editor doing
+        delete-then-write would otherwise trigger a reload on the gap, against a file
+        that does not exist yet” <span class="src">watch.rs:41-90</span>. On reload, the
+        providers, model registry, default model and provider-plugin generation are
+        swapped in place <span class="src">state.rs:853-913</span>; in-flight turns keep
+        their cloned provider and finish on the old one. On error: “Keep serving the old
+        config. A syntax error mid-edit is expected and must not take the server down”
+        <span class="src">watch.rs:138-140</span>.
+      </p>
+
+      <div class="note warn">
+        <h4>what does <u>not</u> hot reload (exact list)</h4>
+        <p>
+          <b>new <code>[[plugin]]</code> entries</b> — the config watcher explicitly skips
+          them <span class="src">state.rs:844-846</span>; use
+          <code>POST /plugin/load {"from_config":true}</code> (spawns only the new ones) or
+          restart.
+        </p>
+        <p>
+          <b>a crashed plugin</b> — there is no supervisor and no auto-respawn. The health
+          scan announces <code>plugin_state: crashed</code> once
+          <span class="src">state.rs:478-502</span>, and its tools refuse with
+          <code>blocked: tool '…' belongs to a plugin that is currently stopped. Start the
+          plugin again before retrying</code> — “so the agent can restart the plugin instead
+          of giving up on the capability” <span class="src">exec.rs:619-631</span>.
+        </p>
+        <p>
+          <b><code>[policy] mode</code> and <code>[server] idle_exit_secs</code></b> — read at
+          startup only <span class="src">state.rs:844-846</span> (docs agree:
+          CONFIG.md:94).
+        </p>
+        <p style="margin:0">
+          <b>the embedded default UI</b> — <code>assets/tui/*.lua</code> ship via
+          <code>include_str!</code> and need a rebuild
+          <span class="src">default_config.rs:26-59</span>; the editable surface is the
+          copy seeded to <code>~/.kn9t/tui/</code>. And no SIGHUP anywhere: reload is a
+          file save or an explicit call, never a magic signal.
+        </p>
+      </div>
+    </section>
+
+    <!-- ── 08 tui ── -->
+    <section id="tui">
+      <p class="eyebrow">08 — the terminal UI</p>
+      <h2>Lua decides <i>where</i>, Rust decides <i>how</i></h2>
+      <p>
+        The TUI never imports <code>kn9t-core</code> — HTTP + SSE only
+        <span class="src">kn9t-tui/Cargo.toml:7</span>. Its whole layout is one Lua
+        program returning a widget tree: “the mechanism/policy boundary: Lua decides
+        <i>where</i>, Rust <i>how</i> (markdown, highlighting, scroll maths, render
+        cache)” <span class="src">render.rs:271-272</span>.
+      </p>
+      <div class="tblwrap"><table class="tbl">
+        <tr><th>~/.kn9t/tui/</th><th>role</th></tr>
+        <tr><td><code>00_theme.lua</code></td><td class="d">runs first: <code>TUI</code> namespace, palette from <code>kn9t.theme</code>, formatting helpers</td></tr>
+        <tr><td><code>10_state.lua</code></td><td class="d">documents the host-published <code>kn9t.state</code> / <code>kn9t.context</code> shapes</td></tr>
+        <tr><td><code>20_header.lua</code></td><td class="d">tab bar + breadcrumb (each tab its own clickable widget)</td></tr>
+        <tr><td><code>30_sidebar_left.lua</code></td><td class="d">places the native <code>explorer</code> view</td></tr>
+        <tr><td><code>40_sidebar_right.lua</code></td><td class="d">session/context dashboard, usage box</td></tr>
+        <tr><td><code>50_status.lua</code></td><td class="d">the segmented status bar — the grammar this whole site imitates</td></tr>
+        <tr><td><code>60_keybinds.lua</code></td><td class="d"><code>kn9t.map</code> keybinds, click handlers, tool modes</td></tr>
+        <tr><td><code>90_render.lua</code></td><td class="d"><code>render_ui(width, height)</code> — the full-screen layout + widget vocabulary</td></tr>
+      </table></div>
+      <ul>
+        <li><b>Widget DSL</b> — <code>text · box · list · input · split · gauge · float ·
+          native · plugin · clickable</code>, sized <code>fixed / percent / flex</code>
+          <span class="src">widgets.rs:39-141</span>.</li>
+        <li><b>5 native views</b> rendered by Rust at Lua-chosen rectangles:
+          <code>transcript · input · status · explorer · viewer</code>
+          <span class="src">widgets.rs:152</span>. If <code>render_ui</code> fails, you get
+          the error shell — “There is deliberately no second Rust layout”
+          <span class="src">render.rs:122-134</span>.</li>
+        <li><b>Plugin UI is sandboxed and placeable</b>: a plugin ships Lua via
+          <code>ui_register_lua</code> into its own environment — “a plugin must not read
+          session state or call HTTP through the UI layer”
+          <span class="src">plugin_ui.rs:343-344</span> — and the layout decides its slot:
+          “the plugin's Lua produces the subtree; this only supplies the rect, so a plugin
+          cannot choose its placement” <span class="src">render.rs:316-354</span>.</li>
+        <li><b>Palette</b> — violet = accent, amber = alert, silver = chrome, “and
+          green/red are reserved for diffs” <span class="src">theme.rs:11-19</span>. This
+          page uses those exact values.</li>
+      </ul>
+    </section>
+
+    <!-- ── 09 schema ── -->
+    <section id="schema">
+      <p class="eyebrow">09 — the contract</p>
+      <h2>Schema-first</h2>
+      <p>
+        The API contract is data, not prose: <code>schema/http.json</code>,
+        <code>schema/plugin.json</code>, <code>schema/config.json</code> generate the
+        typed surfaces with <code>cargo run -p xtask -- generate</code>
+        <span class="src">xtask/src/main.rs:1</span> — the server's request types
+        (<code>api.rs</code>), the TUI's <code>wire.rs</code>, <code>API.md</code>,
+        <code>docs/CONFIG.md</code>, and Go/Python stubs.
+      </p>
+      <div class="win plain" data-title="crates/kn9t-tui/src/wire.rs:1-8">
+<pre><code class="language-rust">//! GENERATED FILE — do not edit by hand. Regenerate with `cargo run -p xtask -- generate`.
+//! Source of truth: `schema/http.json` + `schema/plugin.json` (ADR-0005).
+//! R-TUI-010 / GI-6: no `kn9t-*` dependency — standalone serde-only file</code></pre>
+      </div>
+      <p>
+        The route dispatch itself is hand-written <span class="src">router.rs:130-273</span>
+        — one <code>match (method, segs)</code> over 37 routes — but its payload types are
+        generated, and <code>scripts/check-schema.sh</code> catches drift between schema and
+        code <span class="src">api.rs:9-11</span>.
+      </p>
+    </section>
+
+    <!-- ── 10 drift ── -->
+    <section id="drift">
+      <p class="eyebrow">10 — docs vs source</p>
+      <h2>Where the docs drift (the source wins)</h2>
+      <p>
+        This page was written from the code and checked against the docs afterwards.
+        Most of it matches — but here is exactly where they disagree, so you know
+        which one we trusted.
+      </p>
+      <ul>
+        <li><b>The crate graph in <code>AGENTS.md</code> shows 5 crates.</b> The workspace has
+          15 members (14 crates + <code>xtask</code>) — incl. <code>kn9t-store</code>,
+          <code>kn9t-react</code>, <code>kn9t-plugin</code>, <code>kn9t-provider-*</code>
+          <span class="src">Cargo.toml:3-20</span>.</li>
+        <li><b>There is no <code>Policy</code> trait.</b> Docs mention
+          <code>traits (Provider, Tool, Store, Policy)</code>; the code has
+          <code>Store · Tool · Provider · Compactor · Approver · PluginKv · EventSink</code>
+          plus policy <i>structs</i>, and ADR-0008 moved the judgement to a policy
+          plugin <span class="src">traits.rs · policy.rs:1-17</span>.</li>
+        <li><b>“9 hooks” = 8 + 1.</b> <code>HookName</code> has 8 variants
+          <span class="src">event.rs:31-39</span>; the ninth thing is the
+          <code>on_event</code> bus subscription, which the spec counts separately
+          (spec/08-plugin.md:65-82).</li>
+        <li><b>Native views: docs say 3</b> (<code>transcript, input, status</code>);
+          the code has 5 — <code>explorer</code> and <code>viewer</code> are native too
+          <span class="src">widgets.rs:152</span>.</li>
+      </ul>
+      <p class="hint">
+        verified as documented: hot reload of plugins (PLUGIN_DEVELOPMENT.md:32),
+        <code>[server]</code> not hot-reloaded (CONFIG.md:94), and ARCHITECTURE.md
+        §1–§15 matches the sources cited above.
+      </p>
+
+      <div class="cta" style="margin-top:28px">
+        <a class="btn primary" href="https://github.com/96Ems/kn9t/blob/main/docs/ARCHITECTURE.md">ARCHITECTURE.md ↗</a>
+        <a class="btn ghost" href="https://github.com/96Ems/kn9t/blob/main/API.md">API.md ↗</a>
+        <a class="btn ghost" href="https://github.com/96Ems/kn9t/blob/main/DESIGN.md">DESIGN.md ↗</a>
+        <a class="btn ghost" href="index.html">← back to landing</a>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ═══ inspector (40_sidebar_right.lua) ═══════════════════════════════ -->
+  <aside class="col inspector">
+    <div class="side-title">at a glance</div>
+    <div class="win" data-title="measured from source" style="padding:16px">
+      <div class="kv">
+        <span class="k">members</span><span class="v">15</span>
+        <span class="k">events</span><span class="v">26 <span class="v ok">7 durable</span></span>
+        <span class="k">routes</span><span class="v">37</span>
+        <span class="k">host ops</span><span class="v">20</span>
+        <span class="k">hooks</span><span class="v">8 <span class="v ok">+ on_event</span></span>
+        <span class="k">native views</span><span class="v">5</span>
+        <span class="k">lua files</span><span class="v">8</span>
+        <span class="k">reload</span><span class="v ok">3 surfaces</span>
+        <span class="k">tokio</span><span class="v ok">none</span>
+      </div>
+    </div>
+    <div class="win" data-title="keys" style="padding:16px">
+      <div class="keys">
+        <span class="k">C-p</span><span class="v">commands</span>
+        <span class="k">1…0</span><span class="v">jump to section</span>
+        <span class="k">L</span><span class="v">light / dark</span>
+        <span class="k">G</span><span class="v">github</span>
+        <span class="k">Esc</span><span class="v">close overlay</span>
+      </div>
+    </div>
+    <div class="side-title" style="padding-top:16px">remember</div>
+    <div class="win plain" data-title="reload owns nothing" style="padding:16px">
+      <p style="margin:0;font-size:11.5px;color:var(--dim)">
+        The log is the truth. UI, plugins and config are derivations over it —
+        that's <i>why</i> they can restart mid-session without a migration, a
+        rehydration, or a prayer.
+      </p>
+    </div>
+  </aside>
+</div>
+
+<!-- ═══ bottom chrome: status bar (50_status.lua) ════════════════════════ -->
+<footer class="chrome" id="chrome-bottom">
+  <div class="seg">
+    <span class="blk" id="sb-phase" style="background:var(--dim)">idle</span>
+    <span class="lbl">ctx</span>
+    <span class="blk" id="sb-ctx" style="background:var(--add)">0%</span>
+    <span class="val" id="sb-read">0.0k/0.0k</span>
+    <span class="lbl">$</span>
+    <span class="money">0.0000</span>
+    <span class="opt"><span class="lbl">events</span><span class="val">26</span></span>
+    <span class="opt"><span class="lbl">routes</span><span class="val">37</span></span>
+    <span class="opt"><span class="lbl">ops</span><span class="val">20</span></span>
+  </div>
+  <div id="sb-right">
+    <span class="k">C-p</span><span class="v">commands</span>
+    <span class="k">1…0</span><span class="v">jump</span>
+    <span class="k">L</span><span class="v">theme</span>
+    <span class="k">G</span><span class="v">github</span>
+  </div>
+</footer>
+
+<button class="fab" id="fab" title="commands">⌘</button>
+
+<!-- ═══ command palette ══════════════════════════════════════════════════ -->
+<div class="palette" id="palette" hidden>
+  <div class="pbox">
+    <div class="ptitle">commands<span class="r">kn9t</span></div>
+    <div class="pinput">
+      <span class="pr">›</span>
+      <input id="pq" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"
+             placeholder="type to filter…"><span class="cur">▌</span>
+    </div>
+    <ul class="plist" id="plist"></ul>
+    <div class="phint"><span class="k">↑↓</span> move &nbsp; <span class="k">enter</span> run &nbsp; <span class="k">esc</span> close</div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+<script>
+/* ═══ kn9t architecture — vanilla JS, no framework. Maps 1:1 to TUI behaviour. */
+(function () {
+  "use strict";
+  var $ = function (s) { return document.querySelector(s); };
+  var $$ = function (s) { return Array.prototype.slice.call(document.querySelectorAll(s)); };
+
+  if (window.hljs) { window.hljs.highlightAll(); }
+
+  /* ── theme (Theme::dark / Theme::light) ── */
+  var root = document.documentElement, themeBtn = $("#theme-btn");
+  function setTheme(t) {
+    root.setAttribute("data-theme", t);
+    themeBtn.textContent = t === "dark" ? "◐ light" : "◐ dark";
+    try { localStorage.setItem("kn9t-theme", t); } catch (e) {}
+  }
+  try {
+    var saved = localStorage.getItem("kn9t-theme");
+    if (saved) { setTheme(saved); }
+  } catch (e) {}
+  function toggleTheme() { setTheme(root.getAttribute("data-theme") === "dark" ? "light" : "dark"); }
+  themeBtn.addEventListener("click", toggleTheme);
+
+  /* ── sections, explorer rows, breadcrumb ── */
+  var sections = $$("main section[id]");
+  var rows = {};
+  $$(".row[data-sec]").forEach(function (r) { rows[r.getAttribute("data-sec")] = r; });
+  var crumb = $("#crumb-cur");
+  var active = null;
+  function setActive(id) {
+    if (active === id) { return; }
+    active = id;
+    Object.keys(rows).forEach(function (k) { rows[k].classList.toggle("active", k === id); });
+    var r = rows[id];
+    crumb.textContent = r ? r.textContent.trim().replace(/^▸\s*/, "") : "architecture.html";
+  }
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (e.isIntersecting) { setActive(e.target.id); }
+    });
+  }, { rootMargin: "-80px 0px -65% 0px", threshold: 0 });
+  sections.forEach(function (s) { io.observe(s); });
+
+  /* reveal on scroll */
+  var rio = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (e.isIntersecting) { e.target.classList.add("in"); rio.unobserve(e.target); }
+    });
+  }, { threshold: 0.06 });
+  $$(".win, .flow, .diffgrid, .prim, .feat, .eyebrow, main h2, .lede, .note, .tblwrap, .steps, .chiplist").forEach(function (el) {
+    el.classList.add("reveal"); rio.observe(el);
+  });
+  /* flow diagrams: stage the nodes, then the packets run the rails */
+  $$("[data-diagram]").forEach(function (g) {
+    g.classList.add("seq", "reveal");
+    rio.observe(g);
+    Array.prototype.forEach.call(g.querySelectorAll(".fnode"), function (n, i) {
+      n.style.setProperty("--i", i);
+    });
+  });
+
+  /* ── status bar: ctx % = scroll depth (TUI.context_color at .75 / .90) ── */
+  var sbPhase = $("#sb-phase"), sbCtx = $("#sb-ctx"), sbRead = $("#sb-read");
+  var readingTimer = null, pending = false;
+  function phase(text, colour) {
+    sbPhase.textContent = text;
+    sbPhase.style.background = colour;
+  }
+  function fmt(n) {
+    return n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n);
+  }
+  function paint() {
+    pending = false;
+    var max = document.documentElement.scrollHeight - innerHeight;
+    var frac = max > 0 ? Math.min(1, scrollY / max) : 0;
+    var pct = Math.round(frac * 100);
+    sbCtx.textContent = pct + "%";
+    sbCtx.style.background = pct >= 90 ? "var(--del)" : pct >= 75 ? "var(--alert)" : "var(--add)";
+    var total = document.body.innerText.length;
+    sbRead.textContent = fmt(Math.round(total * frac)) + "/" + fmt(total);
+  }
+  addEventListener("scroll", function () {
+    if (!paletteOpen) { phase("reading", "var(--accent)"); }
+    clearTimeout(readingTimer);
+    readingTimer = setTimeout(function () {
+      if (!paletteOpen) { phase("idle", "var(--dim)"); }
+    }, 500);
+    if (!pending) { pending = true; requestAnimationFrame(paint); }
+  }, { passive: true });
+  addEventListener("resize", paint, { passive: true });
+  paint();
+
+  /* ── command palette ── */
+  var palette = $("#palette"), plist = $("#plist"), pq = $("#pq");
+  var paletteOpen = false, sel = 0, filtered = [];
+  var items = [];
+  function go(id) {
+    var el = document.getElementById(id);
+    if (el) { el.scrollIntoView({ behavior: "smooth", block: "start" }); }
+  }
+  items.push({ g: "0", h: "hero", label: "top — how kn9t works", run: function () { go("top"); } });
+  /* keys 1…9,0 map to the page sections */
+  sections.slice(1).forEach(function (s, i) {
+    items.push({
+      g: i === 9 ? "0" : String(i + 1), h: "section " + (i + 1), label: s.id,
+      run: function () { go(s.id); }
+    });
+  });
+  items.push({ g: "↵", h: "landing", label: "back to the landing page", run: function () {
+    location.href = "index.html";
+  } });
+  items.push({ g: "L", h: "view", label: "toggle light / dark", run: toggleTheme });
+  items.push({ g: "G", h: "↗", label: "open github repository", run: function () {
+    open("https://github.com/96Ems/kn9t", "_blank");
+  } });
+
+  function render() {
+    plist.innerHTML = "";
+    filtered.forEach(function (it, i) {
+      var li = document.createElement("li");
+      if (i === sel) { li.className = "sel"; }
+      var b = document.createElement("button");
+      b.innerHTML = '<span class="g">' + it.g + '</span><span>' + it.label +
+                    '</span><span class="h">' + it.h + '</span>';
+      b.addEventListener("click", function () { closePalette(); it.run(); });
+      li.appendChild(b);
+      plist.appendChild(li);
+    });
+  }
+  var query = "";
+  function filter() {
+    var q = query.toLowerCase();
+    filtered = items.filter(function (it) {
+      return (it.label + " " + it.h).toLowerCase().indexOf(q) >= 0;
+    });
+    sel = 0;
+    render();
+  }
+  pq.addEventListener("input", function () { query = pq.value; filter(); });
+  function openPalette() {
+    paletteOpen = true;
+    palette.hidden = false;
+    palette.classList.add("open");
+    query = ""; pq.value = ""; filter();
+    phase("palette", "var(--accent)");
+    setTimeout(function () { pq.focus(); }, 0);
+  }
+  function closePalette() {
+    paletteOpen = false;
+    palette.hidden = true;
+    palette.classList.remove("open");
+    phase("idle", "var(--dim)");
+  }
+  addEventListener("keydown", function (e) {
+    if (paletteOpen) {
+      if (e.key === "Escape") { closePalette(); e.preventDefault(); }
+      else if (e.key === "ArrowDown") { sel = Math.min(sel + 1, filtered.length - 1); render(); e.preventDefault(); }
+      else if (e.key === "ArrowUp") { sel = Math.max(sel - 1, 0); render(); e.preventDefault(); }
+      else if (e.key === "Enter") {
+        if (filtered[sel]) { closePalette(); filtered[sel].run(); }
+        e.preventDefault();
+      }
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === "p" || e.key === "P")) { openPalette(); e.preventDefault(); return; }
+    if (e.ctrlKey || e.metaKey || e.altKey) { return; }
+    if (e.key === "l" || e.key === "L") { toggleTheme(); }
+    else if (e.key === "g" || e.key === "G") { open("https://github.com/96Ems/kn9t", "_blank"); }
+    else if (e.key >= "0" && e.key <= "9") {
+      var idx = e.key === "0" ? 9 : parseInt(e.key, 10);   /* 1 → events … 0 → drift */
+      var s = sections[idx];
+      if (s) { go(s.id); }
+    }
+  });
+  palette.addEventListener("click", function (e) {
+    if (e.target === palette) { closePalette(); }
+  });
+  var fab = $("#fab");
+  if (fab) { fab.addEventListener("click", function () { paletteOpen ? closePalette() : openPalette(); }); }
+
+  /* ── copy buttons (clipboard API needs a secure context — LAN http doesn't
+        have one, so fall back to the old execCommand path) ── */
+  function copyText(text, btn) {
+    function done() {
+      var old = btn.textContent;
+      btn.textContent = "✓ copied";
+      setTimeout(function () { btn.textContent = old; }, 1200);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () { legacy(); });
+    } else { legacy(); }
+    function legacy() {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand("copy"); done(); } catch (err) {}
+      document.body.removeChild(ta);
+    }
+  }
+  $$("[data-copy]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var el = document.getElementById(btn.getAttribute("data-copy"));
+      if (el) { copyText(el.textContent, btn); }
+    });
+  });
+})();
+</script>
+</body>
+</html>
