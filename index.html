@@ -1067,9 +1067,11 @@ price_out = 0.40</code></pre>
       </details>
       <details>
         <summary>Does it phone home?</summary>
-        <p>No. The server listens on loopback only and rejects any request carrying an
-        <code>Origin</code> header, so a web page cannot drive it. The only outbound
-        traffic is to the model provider you configure.</p>
+        <p>No. The only outbound traffic is to the model provider you configure.
+        Inbound, the server listens on loopback only, rejects any request carrying an
+        <code>Origin</code> header, and requires a bearer token on every call.
+        Verified the hard way — a hostile web page, in a real browser, holding a
+        stolen token: nothing gets through, nothing leaks back.</p>
       </details>
       <details>
         <summary>Which models can I use?</summary>
